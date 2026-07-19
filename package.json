@@ -1,0 +1,99 @@
+{
+  "name": "byeinss",
+  "version": "1.0.0",
+  "description": "Sistema para acompanhar e planejar sua aposentadoria / independência financeira",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron . --no-sandbox",
+    "dev": "electron . --no-sandbox --enable-logging",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-builder install-app-deps",
+    "import:i10": "node scripts/import-i10.js",
+    "import:sheets": "node scripts/import-sheets.js",
+    "import:all": "node scripts/import-i10.js && node scripts/import-sheets.js",
+    "build": "electron-builder",
+    "build:linux": "electron-builder --linux",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:all": "electron-builder -mwl"
+  },
+  "author": {
+    "name": "Cristian",
+    "email": "your-email@example.com"
+  },
+  "homepage": "https://github.com/cristianmayco/byeINSS",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.byeinss.app",
+    "productName": "byeINSS",
+    "copyright": "Copyright © 2026 Cristian",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "db/init.sql",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "db/init.sql"
+    ],
+    "extraMetadata": {
+      "main": "src/main/main.js"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Finance",
+      "synopsis": "Planejamento de independência financeira e aposentadoria",
+      "description": "byeINSS é um sistema local para acompanhar investimentos, simular FIRE (independência financeira) e planejar aposentadoria. Funciona offline, com dados privados no seu computador."
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "publisherName": "Cristian"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "byeINSS"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "public.app-category.finance",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    }
+  }
+}

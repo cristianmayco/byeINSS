@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>byeINSS — Independência Financeira</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <script src="vendor/chart.min.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">B</div>
+      <div>
+        <div class="brand-name">byeINSS</div>
+        <div class="brand-sub">Independência Financeira</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="#dashboard" class="nav-item active" data-route="dashboard">
+        <span class="nav-icon">📊</span><span>Dashboard</span>
+      </a>
+      <a href="#posicoes" class="nav-item" data-route="posicoes">
+        <span class="nav-icon">💼</span><span>Posições</span>
+      </a>
+      <a href="#lancamentos" class="nav-item" data-route="lancamentos">
+        <span class="nav-icon">📥</span><span>Lançamentos</span>
+      </a>
+      <a href="#proventos" class="nav-item" data-route="proventos">
+        <span class="nav-icon">💰</span><span>Proventos</span>
+      </a>
+      <a href="#preco-teto" class="nav-item" data-route="preco-teto">
+        <span class="nav-icon">🎯</span><span>Preço-teto</span>
+      </a>
+      <a href="#simulador" class="nav-item" data-route="simulador">
+        <span class="nav-icon">📈</span><span>Simulador</span>
+      </a>
+      <a href="#fire" class="nav-item" data-route="fire">
+        <span class="nav-icon">🏖️</span><span>FIRE</span>
+      </a>
+      <a href="#cenarios" class="nav-item" data-route="cenarios">
+        <span class="nav-icon">🎯</span><span>Cenários</span>
+      </a>
+      <a href="#importar" class="nav-item" data-route="importar">
+        <span class="nav-icon">⬇️</span><span>Importar</span>
+      </a>
+      <a href="#config" class="nav-item" data-route="config">
+        <span class="nav-icon">⚙️</span><span>Configurações</span>
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <span id="server-status" class="status-pill">conectando…</span>
+    </div>
+  </aside>
+
+  <main class="content">
+    <section id="page-dashboard" class="page active"></section>
+    <section id="page-posicoes" class="page"></section>
+    <section id="page-lancamentos" class="page"></section>
+    <section id="page-proventos" class="page"></section>
+    <section id="page-preco-teto" class="page"></section>
+    <section id="page-simulador" class="page"></section>
+    <section id="page-fire" class="page"></section>
+    <section id="page-cenarios" class="page"></section>
+    <section id="page-importar" class="page"></section>
+    <section id="page-config" class="page"></section>
+  </main>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="js/pages.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

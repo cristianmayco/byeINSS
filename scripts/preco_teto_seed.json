@@ -1,0 +1,16 @@
+{
+  "_comment": "Payload de EXEMPLO com tickers fictícios (EXEMPLO11, LOGX11, ...). NÃO corresponde a nenhuma carteira real. Substitua pelos seus ativos antes de importar em 'Importar > Investidor10'.",
+  "ativos": [
+    { "ticker":"EXEMPLO11","tipo":"FII","segmento":"Logística","quantidade":50,"preco_medio":100.00,"preco_atual":105.00,"preco_teto":120.00,"preco_muito_bom":95.00,"dy":10.00,"nota":7,"pct_carteira":25.00,"pct_ideal":5.00 },
+    { "ticker":"LOGX11","tipo":"FII","segmento":"Logística","quantidade":30,"preco_medio":150.00,"preco_atual":148.00,"preco_teto":160.00,"preco_muito_bom":130.00,"dy":9.00,"nota":8,"pct_carteira":21.00,"pct_ideal":5.00 },
+    { "ticker":"SHOPX11","tipo":"FII","segmento":"Shoppings","quantidade":20,"preco_medio":95.00,"preco_atual":100.00,"preco_teto":110.00,"preco_muito_bom":90.00,"dy":9.50,"nota":8,"pct_carteira":19.00,"pct_ideal":5.00 },
+    { "ticker":"FFX11","tipo":"FII","segmento":"Fundos de Fundos","quantidade":40,"preco_medio":85.00,"preco_atual":88.00,"preco_teto":100.00,"preco_muito_bom":80.00,"dy":11.00,"nota":7,"pct_carteira":17.00,"pct_ideal":5.00 },
+    { "ticker":"HIBRX11","tipo":"FII","segmento":"Híbrido","quantidade":25,"preco_medio":110.00,"preco_atual":115.00,"preco_teto":125.00,"preco_muito_bom":100.00,"dy":9.50,"nota":7,"pct_carteira":14.00,"pct_ideal":5.00 },
+    { "ticker":"ACAOX3","tipo":"ACAO","segmento":"Financeiro","quantidade":10,"preco_medio":40.00,"preco_atual":42.00,"nota":8,"pct_carteira":4.00,"pct_ideal":75.00 }
+  ],
+  "cotacoes": {
+    "EXEMPLO11": [{ "data":"2024-01-15", "preco":105.00 }],
+    "LOGX11": [{ "data":"2024-01-15", "preco":148.00 }]
+  },
+  "proventos": []
+}
