@@ -37,7 +37,7 @@ logs/
 .settings/
 
 # Claude Code / MCP local (artefatos de desenvolvimento)
-.claude/settings.local.json
+.claude/
 .playwright-mcp/
 
 # Sistema operacional

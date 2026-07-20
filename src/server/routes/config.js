@@ -5,7 +5,9 @@ const ALLOWED = [
   'taxa_anual_padrao', 'alerta_dy_limite', 'alerta_concentracao_pct',
   'dy_minimo_global', 'moeda', 'versao_schema',
   'pct_muito_barato', 'pct_barato', 'pct_caro',
-  'reajuste_aporte_anual', 'reajuste_mes_inicio', 'aliquota_ir_dividendos'
+  'reajuste_aporte_anual', 'reajuste_mes_inicio', 'aliquota_ir_dividendos',
+  // PRD 12: janela de alerta de vencimento de contratos
+  'vencimento_janela_alerta_meses'
 ];
 
 router.get('/', (req, res) => {

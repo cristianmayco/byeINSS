@@ -20,6 +20,7 @@ Sistema desktop (Electron) para acompanhar investimentos, simular FIRE (independ
 | **Cenários** | Salvar múltiplos planos (FIRE, patrimônio, aposentadoria) e comparar lado a lado |
 | **Configurações** | Thresholds de preço, reajuste anual, alertas de concentração/DY |
 | **Importar** | Login embutido no I10 (browser isolado) + **enriquecer com P/VP/vacância** + **agenda de dividendos** |
+| **Vencimento de contratos** *(PRD 12, schema 1.2)* | Vencimento médio de contratos + tipo de reajuste (IGPM/IPCA/FIXO/MISTO/OUTRO) por FII. Alerta no dashboard quando vencimento < janela (default 24m). Endpoints: `GET/PUT /api/fiis/contratos/:ticker` e `GET /api/dashboard/alertas-vencimento` |
 
 ---
 
@@ -141,6 +142,7 @@ Após popular o banco, o app calcula em tempo real:
 - **Top posições** com % atual vs % ideal na carteira
 - **Sinais de preço-teto**: oportunidades (abaixo do "muito bom"), no teto, caro
 - **Alertas de concentração** (ativos muito acima do % ideal)
+- **Vencimento de contratos** (PRD 12): alerta de FIIs de Tijolo com vencimento médio < janela configurável (default 24m). Endpoint `/api/dashboard/alertas-vencimento` lista os FIIs com pressão de renegociação se aproximando.
 
 > Os dados ficam 100% locais no seu SQLite — nada é enviado para lugar nenhum.
 

@@ -21,6 +21,7 @@ Este documento descreve **o que o byeINSS faz e o que NÃO faz** com os dados do
 - **Não armazena sua senha do Investidor10.** O login é feito dentro do navegador embutido; a senha fica em cookies criptografados pelo próprio Electron (Chromium) no seu disco. O app não tem acesso a ela.
 - **Não expõe a API local para a rede.** O Express escuta apenas em `127.0.0.1` (loopback), nunca em `0.0.0.0`. Outros dispositivos na sua rede não conseguem acessar.
 - **Não modifica o seu Chrome do sistema.** O perfil de login fica em `~/.config/byeinss/` (ou `%APPDATA%/byeinss/` no Windows), separado do Chrome.
+- **Validação rigorosa de inputs em todas as rotas.** Os endpoints do PRD 12 (vencimento de contratos) aplicam regex estrito no `:ticker` (`^[A-Z]{4}11$` ou `^[A-Z]{4}[0-9]$`), allowlist de campos mutáveis no `PUT`, prepared statements em todos os SQL e mensagens de erro genéricas (não vazam SQL paths). Ver `src/server/routes/contratos.js` + `src/shared/contratos.js`.
 - **Não abre arquivos locais automaticamente.** Você escolhe o que importa.
 
 ## 🛡️ Checklist de segurança para distribuição

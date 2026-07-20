@@ -12,6 +12,8 @@ const dashboardRouter = require('./routes/dashboard.js');
 const importRouter = require('./routes/import.js');
 const configRouter = require('./routes/config.js');
 const cenariosRouter = require('./routes/cenarios.js');
+// PRD 12: Vencimento médio de contratos
+const contratosRouter = require('./routes/contratos.js');
 
 let serverPort = null;
 
@@ -32,9 +34,11 @@ async function startServer() {
   app.use('/api/cotacoes', cotacoesRouter);
   app.use('/api/metas', metasRouter);
   app.use('/api/dashboard', dashboardRouter);
+  app.use('/api/dashboard', contratosRouter.dashboard);  // PRD 12: /alertas-vencimento
   app.use('/api/import', importRouter);
   app.use('/api/config', configRouter);
   app.use('/api/cenarios', cenariosRouter);
+  app.use('/api/fiis/contratos', contratosRouter);       // PRD 12: contratos por FII
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 

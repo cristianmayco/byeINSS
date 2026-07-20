@@ -25,6 +25,15 @@ CREATE TABLE IF NOT EXISTS ativos (
   ultimo_pagto TEXT,          -- data do último pagamento
   alvo_pct_carteira REAL DEFAULT 1.76,  -- % ideal na carteira
   ativo INTEGER DEFAULT 1,    -- 1 = posição aberta, 0 = zerado
+  -- Migration 1.2: Vencimento médio de contratos (PRD 12)
+  vencimento_medio_contratos DATE,
+  vencimento_medio_contratos_meses INTEGER
+    CHECK (vencimento_medio_contratos_meses IS NULL OR vencimento_medio_contratos_meses >= 0),
+  tipo_reajuste TEXT          CHECK (tipo_reajuste IS NULL OR tipo_reajuste IN ('IGPM','IPCA','FIXO','MISTO','OUTRO')),
+  reajuste_percentual REAL     CHECK (reajuste_percentual IS NULL OR (reajuste_percentual >= 0 AND reajuste_percentual <= 100)),
+  vencimento_medio_origem TEXT CHECK (vencimento_medio_origem IS NULL OR vencimento_medio_origem IN ('main','comunicado','manual','fallback')),
+  vencimento_medio_coletado_em TEXT,
+  alerta_vencimento INTEGER DEFAULT 0 CHECK (alerta_vencimento IN (0,1)),
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -100,6 +109,34 @@ CREATE TABLE IF NOT EXISTS config (
   valor TEXT
 );
 
+-- Migration 1.2: Framework de migrations versionadas
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+  duration_ms INTEGER,
+  rows_before INTEGER,
+  rows_after INTEGER,
+  reversible INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_migrations_applied ON schema_migrations(applied_at DESC);
+
+-- Migration 1.2: Audit log do scraper de contratos (PRD 12)
+CREATE TABLE IF NOT EXISTS fii_scraper_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker TEXT NOT NULL,
+  campo TEXT NOT NULL,
+  sucesso INTEGER NOT NULL CHECK (sucesso IN (0,1)),
+  origem TEXT,
+  erro TEXT,
+  ts TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (ticker) REFERENCES ativos(ticker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scraper_log_ticker ON fii_scraper_log(ticker, ts);
+CREATE INDEX IF NOT EXISTS idx_ativos_alerta_venc ON ativos(alerta_vencimento) WHERE alerta_vencimento = 1;
+
 -- Valores padrão
 INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('taxa_anual_padrao', '12.0'),
@@ -107,7 +144,8 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('alerta_concentracao_pct', '10.0'),
   ('dy_minimo_global', '8.0'),
   ('moeda', 'BRL'),
-  ('versao_schema', '1.1'),
+  -- Migration 1.2: schema versionada (atualizada no INSERT OR REPLACE abaixo)
+  ('versao_schema', '1.2'),
   -- Thresholds de preço (em % do preço-teto)
   ('pct_muito_barato', '85.0'),   -- até 85% do preço-teto = muito barato
   ('pct_barato', '100.0'),         -- até 100% = no teto
@@ -117,4 +155,6 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('reajuste_aporte_anual', '10.0'),
   ('reajuste_mes_inicio', '1'),    -- 1=janeiro, 2=fevereiro, etc.
   -- IR
-  ('aliquota_ir_dividendos', '0.0');  -- isento para FIIs pessoa física
+  ('aliquota_ir_dividendos', '0.0'),  -- isento para FIIs pessoa física
+  -- Migration 1.2: Vencimento de Contratos
+  ('vencimento_janela_alerta_meses', '24');
