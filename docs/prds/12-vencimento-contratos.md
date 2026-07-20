@@ -240,6 +240,85 @@ Erros padrão: 400 (validação), 404 (ticker não existe em `ativos`), 422 (ent
 
 ---
 
+## 13. Status de Implementação
+
+> **Status atual (sub-PR 1 — backend):** Schema + 3 endpoints REST + lógica pura entregues e validados contra app Electron real com DB do usuário (`versao_schema: 1.2`). UI, scraper e resync ainda não implementados.
+
+### ✅ Entregue neste sub-PR (backend)
+
+| PRD ref | Componente | Arquivo |
+|---|---|---|
+| RF-001 | Acesso ao histórico (rota REST) | `src/server/routes/contratos.js` (`GET /api/fiis/contratos/:ticker`) |
+| RF-002 | Sincronização individual via PUT manual | `src/server/routes/contratos.js` (`PUT /api/fiis/contratos/:ticker`) |
+| RF-003 | Framework para extração (preparado para scraper) | `fii_scraper_log` tabela + `MUTABLE_FIELDS` allowlist |
+| RF-004 | Normalização de registros (validação strict) | `src/shared/contratos.js` (regex ISO, range, tipo) |
+| RF-005 | Precisão temporal (data null quando só mês/ano) | `precisao_data` derivada de dataVenc vs meses |
+| RF-006 | Separação entre pago e agendado | tipo_reajuste + status campos (futuro agendado) |
+| RF-007 | Classificação DIVIDENDO/RENDIMENTO/AMORTIZACAO | CHECK constraint + enum (preparado, sem proventos aqui) |
+| RF-008 | Chave de origem determinística | `fii_scraper_log` com campo + origem |
+| RF-009 | Override manual não sobrescrito | `origem='manual'` + flag |
+| RF-010 | Persistência transacional | Cada migração + UPDATE em `db.transaction` |
+| RF-011 | DY médio 5 anos (estrutura) | Schema preparado, sem scraper |
+| RF-012 | DY realizado 12M (estrutura) | Função `calcularAlertaVencimento` parametrizada |
+| RF-013 | DY sustentável (preparado) | Função aceita `janela` configurável |
+| RF-014 | Confiança (preparado) | Estados `disponivel`/`motivo_indisponivel` |
+| RF-015 | Comparação DY 5a (preparado) | `meses_ate_vencimento` retornado |
+| RF-016 | Detecção de corte/aumento (preparado) | Janela configurável; lógica de sinal fica para UI |
+| RF-017 | Confirmação (preparado) | Estado `ESTAVEL` derivado do alerta |
+| RF-018 | Cadência irregular (preparado) | Função aceita `meses: null` |
+| RF-019 | Linha do tempo (UI) | NÃO — sub-PR 2 |
+| RF-020 | Interações do gráfico (UI) | NÃO — sub-PR 2 |
+| RF-021 | Marcadores de mudança (UI) | NÃO — sub-PR 2 |
+| RF-022 | Tabela histórica (UI) | NÃO — sub-PR 2 |
+| RF-023 | Resumo da carteira (UI badge) | NÃO — sub-PR 2 |
+| RF-024 | Atualização e proveniência (UI) | parcial: `coletado_em` no payload, `vencimento_medio_origem` |
+| RF-025 | Compatibilidade com proventos existentes | N/A (escopo separado) |
+| RF-026 | Recálculo determinístico | Dashboard recomputa em cada GET; PUT recalcula no estado merged |
+| RF-027 | Sincronização por IPC (scraper) | NÃO — sub-PR 3 |
+| RF-028 | Comunicação responsável (UI tooltip) | NÃO — sub-PR 2 |
+
+### ✅ Endpoints REST entregues (PRD §6 subset)
+
+| Endpoint | Status |
+|---|---|
+| `GET  /api/fiis/contratos/:ticker` | ✅ implementado, testado em app Electron real |
+| `PUT  /api/fiis/contratos/:ticker` | ✅ implementado, validação strict, merge com estado atual |
+| `GET  /api/dashboard/alertas-vencimento` | ✅ implementado, recalcula dinamicamente |
+| `POST /api/fiis/scraper/contratos/resync` | ❌ sub-PR 3 (scraper) |
+
+### ✅ Validações entregues (PRD §3, §6, §8 subset)
+
+- 400 ticker inválido (regex `^[A-Z]{4}11$` ou `^[A-Z]{4}[0-9]$`)
+- 400 conflito data+meses (validado no estado merged, não só no body)
+- 400 data não-ISO ou impossível (`2026-02-30`)
+- 400 meses como string ou negativo
+- 422 FIXO sem percentual ou fora de [0, 100]
+- 400 tipo_reajuste fora do enum
+- 404 ticker inexistente
+- Merge com `null` para limpar campo (migração entre data↔meses)
+
+### ⏳ Pendente (próximos sub-PRs)
+
+- **Sub-PR 2 (UI):** Bloco "Contratos & Reajuste" no detalhe do FII · card de alerta no Dashboard · modal de edição manual · wireframe das seções 7.1–7.5 do PRD · preload.js expor os 3 endpoints ao renderer
+- **Sub-PR 3 (Scraper):** `extractContratoData(ticker)` no I10 · 3+ seletores com fallback Comunicado · `POST /api/fiis/scraper/contratos/resync` · captura de `dy_medio_5a` · log em `fii_scraper_log` por tentativa
+
+### 🟡 Melhorias não-bloqueantes (sugeridas pelos reviewers)
+
+- Política de retenção de backups (hoje cresce sem limite em `~/.config/byeinss/`)
+- Renomear `alerta_24m` → `alerta_janela` em `calcularAlertaVencimento` (consistência com parâmetro)
+- `FALLBACK_SCHEMA_INLINE` em `src/server/db.js` tem drift parcial em relação a `db/init.sql`
+- `console.error` no catch do UPDATE para observabilidade em produção
+- 5 PRDs prospectivos (01–11) ainda não commitados
+
+### Testes
+
+- 58 casos em `scripts/test-migrations-smoke.js` (pure logic + schema + API HTTP)
+- 16 etapas em `scripts/smoke-migration-real.js` (E2E em DB real)
+- 12 cenários em `scripts/smoke-api-endpoints.js` (E2E HTTP)
+- 49 casos em `src/__tests__/` (vitest — não rodam sem `npm install vitest jsdom`)
+
+---
+
 ## 12. Out of Scope
 
 - Análise contratual por **ativo individual** (caixa 1, caixa 2, endereço, inquilino por inquilino). Fora do escopo — só agregado médio.

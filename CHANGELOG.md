@@ -22,7 +22,7 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
   - 400 tipo_reajuste fora do enum
   - 404 ticker inexistente em `ativos`
 - **Auditoria**: cada PUT grava uma linha em `fii_scraper_log` por campo alterado.
-- **Harness de testes**: `scripts/test-migrations-smoke.js` (47 casos) + `scripts/smoke-migration-real.js` (E2E em DB real) + `scripts/smoke-api-endpoints.js` (12 cenários HTTP). Documentação dos testes em vitest também em `src/__tests__/`.
+- **Harness de testes**: `scripts/test-migrations-smoke.js` (58 casos) + `scripts/smoke-migration-real.js` (E2E em DB real) + `scripts/smoke-api-endpoints.js` (12 cenários HTTP). Testes vitest também em `src/__tests__/` (49 casos).
 
 ### Changed
 

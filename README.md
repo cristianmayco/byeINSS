@@ -20,7 +20,7 @@ Sistema desktop (Electron) para acompanhar investimentos, simular FIRE (independ
 | **Cenários** | Salvar múltiplos planos (FIRE, patrimônio, aposentadoria) e comparar lado a lado |
 | **Configurações** | Thresholds de preço, reajuste anual, alertas de concentração/DY |
 | **Importar** | Login embutido no I10 (browser isolado) + **enriquecer com P/VP/vacância** + **agenda de dividendos** |
-| **Vencimento de contratos** *(PRD 12, schema 1.2)* | Vencimento médio de contratos + tipo de reajuste (IGPM/IPCA/FIXO/MISTO/OUTRO) por FII. Alerta no dashboard quando vencimento < janela (default 24m). Endpoints: `GET/PUT /api/fiis/contratos/:ticker` e `GET /api/dashboard/alertas-vencimento` |
+| **Vencimento de contratos** *(PRD 12, schema 1.2, backend only)* | Vencimento médio de contratos + tipo de reajuste (IGPM/IPCA/FIXO/MISTO/OUTRO) por FII. Alerta via `GET /api/dashboard/alertas-vencimento` quando vencimento < janela (default 24m, configurável). Endpoints REST prontos (`GET/PUT /api/fiis/contratos/:ticker`); UI de detalhe/bloco de alerta e scraper I10 em sub-PRs seguintes |
 
 ---
 
