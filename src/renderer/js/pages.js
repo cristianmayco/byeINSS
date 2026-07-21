@@ -10,12 +10,18 @@ async function renderDashboard(el) {
       console.error(error);
       return { janela: 24, itens: [] };
     });
-  const [resumo, evolucao, proventos, alertas, alertasVencimento] = await Promise.all([
+  const indicadoresRequest = api('/api/fiis/indicadores')
+    .catch(error => {
+      console.error(error);
+      return { data: [] };
+    });
+  const [resumo, evolucao, proventos, alertas, alertasVencimento, indicadoresResp] = await Promise.all([
     api('/api/dashboard/resumo'),
     api('/api/dashboard/evolucao'),
     api('/api/dashboard/proventos-mensais'),
     api('/api/dashboard/alertas'),
-    contractAlertsRequest
+    contractAlertsRequest,
+    indicadoresRequest
   ]);
   if (renderSequence !== dashboardRenderSequence) return;
 
@@ -32,6 +38,7 @@ async function renderDashboard(el) {
     </div>
 
     <div id="dashboard-contract-alerts"></div>
+    <div id="dashboard-indicadores-alerta"></div>
 
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-label">Patrimônio</div>
@@ -92,6 +99,18 @@ async function renderDashboard(el) {
     document.getElementById('dashboard-contract-alerts'),
     { items: contractItems, janela: alertasVencimento.janela || 24 }
   );
+
+  // PRD 02 — Bloco de alerta de indicadores históricos (DY vs 5a).
+  // Cruza com posições em aberto (mesma lógica que contratos).
+  const indicadoresItens = (indicadoresResp && indicadoresResp.data ? indicadoresResp.data : [])
+    .filter(it => openTickers.has(it.ticker));
+  if (window.byeINSSIndicadoresUI) {
+    window.byeINSSIndicadoresUI.renderizarBlocoAlertaDashboard(
+      document.getElementById('dashboard-indicadores-alerta'),
+      indicadoresItens,
+      { maxItens: 10 }
+    );
+  }
 
   // Gráfico de evolução
   chartsToDestroy.push(new Chart(document.getElementById('chart-evolucao'), {
@@ -256,11 +275,17 @@ function renderFiiSummary(mount, ativo) {
 
 // ============ POSIÇÕES ============
 async function renderPosicoes(el) {
-  const [ativos, resumo] = await Promise.all([
+  const [ativos, resumo, indicadoresResp] = await Promise.all([
     api('/api/ativos?ativo_only=1'),
-    api('/api/dashboard/resumo')
+    api('/api/dashboard/resumo'),
+    api('/api/fiis/indicadores').catch(() => ({ data: [] }))
   ]);
   const byTicker = Object.fromEntries(resumo.posicoes.map(p => [p.ticker, p]));
+  // PRD 02: map { TICKER → item } para popular colunas DY vs 5y / Rent. real 12M
+  const indicadoresByTicker = {};
+  (indicadoresResp && indicadoresResp.data ? indicadoresResp.data : []).forEach(it => {
+    indicadoresByTicker[(it.ticker || '').toUpperCase()] = it;
+  });
   el.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Posições</div><div class="page-subtitle">${ativos.length} ativos na carteira</div></div>
@@ -274,12 +299,14 @@ async function renderPosicoes(el) {
             <th>Qtd</th><th>PM</th><th>Atual</th>
             <th>Saldo</th><th>Var %</th>
             <th>P/VP</th><th>Vac.</th>
+            <th>DY vs 5y</th><th>Rent. real 12M</th>
             <th>%Cart</th><th>%Ideal</th>
             <th>Nota</th><th>Ações</th>
           </tr></thead>
           <tbody>
             ${ativos.filter(a => (byTicker[a.ticker]?.qtd || 0) > 0).map(a => {
               const p = byTicker[a.ticker] || {};
+              const indicador = indicadoresByTicker[(a.ticker || '').toUpperCase()] || null;
               const varClass = p.variacao_pct >= 0 ? 'pos' : 'neg';
               const pvpClass = a.p_vp < 0.85 ? 'pos' : a.p_vp > 1.15 ? 'neg' : 'muted';
               const vacClass = a.vacancia > 20 ? 'neg' : a.vacancia > 10 ? 'pos' : 'muted';
@@ -294,6 +321,12 @@ async function renderPosicoes(el) {
               const editButton = safeId == null
                 ? ''
                 : `<button class="btn btn-sm btn-secondary" onclick="openAtivoModal(${safeId})">Editar</button>`;
+              const dyBadge = window.byeINSSIndicadoresUI && a.tipo === 'FII'
+                ? window.byeINSSIndicadoresUI.badgeDyVs5aHtml(indicador)
+                : '<span class="muted">—</span>';
+              const rentCell = window.byeINSSIndicadoresUI && a.tipo === 'FII'
+                ? window.byeINSSIndicadoresUI.rentabReal12MHtml(indicador)
+                : '<span class="muted">—</span>';
               return `<tr>
                 <td>${tickerCell}</td>
                 <td><span class="tag blue">${safeType}</span></td>
@@ -305,6 +338,8 @@ async function renderPosicoes(el) {
                 <td class="${varClass}">${pct(p.variacao_pct)}</td>
                 <td class="${pvpClass}">${a.p_vp ? a.p_vp.toFixed(2) : '—'}</td>
                 <td class="${vacClass}">${a.vacancia != null ? a.vacancia.toFixed(1) + '%' : '—'}</td>
+                <td class="col-dy-vs-5a">${dyBadge}</td>
+                <td class="col-rentab-real-12m">${rentCell}</td>
                 <td>${pct(p.pct_carteira)}</td>
                 <td>${pct(a.alvo_pct_carteira)}</td>
                 <td>${a.nota || '—'}</td>
