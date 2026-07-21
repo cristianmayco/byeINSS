@@ -620,16 +620,21 @@ window.delLancamento = async function(id) {
 // filtros por tipo, gráfico empilhado Chart.js, badges de tipo
 // (texto + cor + role=status), projeção distribuível separada de
 // amortizações futuras explícitas.
+
+// PRD 03: proventos-ui.js é carregado via <script src> (NÃO módulo),
+// então não exporta no escopo bare. Helpers ficam em window.ProventosUI.
+// Desempacotamos no escopo do módulo (e não por função) para que tanto
+// renderProventos quanto openProvBatchModal possam chamá-los bare.
+const _pui = (typeof window !== 'undefined' && window.ProventosUI) || {};
+const renderFiltroTipos = _pui.renderFiltroTipos || (() => '');
+const badgeTipo = _pui.badgeTipo || (() => '');
+const emptyStateProventos = _pui.emptyStateProventos || (() => '');
+const buildChartStackedDataset = _pui.buildChartStackedDataset || (() => ({ labels: [], datasets: [] }));
+const renderLinhasBatch = _pui.renderLinhasBatch || (() => '');
+const serializarTiposParaHash = _pui.serializarTiposParaHash || (() => '');
+const lerTiposDoHash = _pui.lerTiposDoHash || (() => new Set());
+
 async function renderProventos(el, params) {
-  // PRD 03: helpers de proventos-ui.js ficam em window.ProventosUI
-  // (carregado via <script> regular, sem export ESM). Desempacotamos
-  // localmente para o resto da função poder chamá-los bare.
-  const _pui = (typeof window !== 'undefined' && window.ProventosUI) || {};
-  const renderFiltroTipos = _pui.renderFiltroTipos || (() => '');
-  const badgeTipo = _pui.badgeTipo || (() => '');
-  const emptyStateProventos = _pui.emptyStateProventos || (() => '');
-  const buildChartStackedDataset = _pui.buildChartStackedDataset || (() => ({ labels: [], datasets: [] }));
-  const renderLinhasBatch = _pui.renderLinhasBatch || (() => '');
   // 1) Ler filtros do hash (RF-013) — params.tipos já vem do router se houver.
   const tiposAtivos = (params && params.tipos)
     ? new Set(String(params.tipos).split(',').map(s => s.toUpperCase()))

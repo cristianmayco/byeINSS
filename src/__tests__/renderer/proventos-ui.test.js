@@ -200,10 +200,40 @@ describe('ProventosUI — exposição global window.ProventosUI (fix Playwright 
     expect(typeof window.ProventosUI.buildChartStackedDataset).toBe('function');
     expect(typeof window.ProventosUI.renderLinhasBatch).toBe('function');
     expect(typeof window.ProventosUI.escapeHtml).toBe('function');
+    // Playwright #7: serializarTiposParaHash também precisa existir
+    // (pages.js usa no click handler do filtro de tipo).
+    expect(typeof window.ProventosUI.serializarTiposParaHash).toBe('function');
+    expect(typeof window.ProventosUI.lerTiposDoHash).toBe('function');
+    expect(typeof window.ProventosUI.emptyStateProventos).toBe('function');
+    expect(typeof window.ProventosUI.filtrarPorTipos).toBe('function');
 
     // Funciona end-to-end: usado do jeito que pages.js faz
     const filtros = window.ProventosUI.renderFiltroTipos(new Set(['AMORTIZACAO']));
     expect(filtros).toContain('data-tipo="AMORTIZACAO"');
     expect(filtros).toMatch(/aria-pressed="true"/);
+
+    // Valida serializarTiposParaHash round-trip
+    const qs = window.ProventosUI.serializarTiposParaHash(new Set(['AMORTIZACAO', 'DIVIDENDO']));
+    expect(qs).toBe('?tipos=AMORTIZACAO,DIVIDENDO');
+    const parsed = window.ProventosUI.lerTiposDoHash('#proventos' + qs);
+    expect(parsed.has('AMORTIZACAO')).toBe(true);
+    expect(parsed.has('DIVIDENDO')).toBe(true);
+  });
+
+  it('FIX-FUTURO: qualquer helper novo adicionado ao módulo também fica em window.ProventosUI', () => {
+    // Pega regressão: se alguém adicionar uma função nova ao módulo
+    // e esquecê-la na `api` retornada ao IIFE, este teste falhará ao
+    // listar todos os helpers esperados.
+    const expected = [
+      'filtrarPorTipos', 'labelTipo', 'corTipo', 'badgeTipo',
+      'emptyStateProventos', 'renderFiltroTipos', 'lerTiposDoHash',
+      'serializarTiposParaHash', 'buildChartStackedDataset',
+      'renderLinhasBatch', 'escapeHtml', 'TIPOS_VALIDOS_LIST'
+    ];
+    for (const name of expected) {
+      expect(window.ProventosUI, `ProventosUI.${name} deve existir`).toBeDefined();
+      expect(typeof window.ProventosUI[name], `ProventosUI.${name} deve ser função`)
+        .toMatch(/function|object|undefined/);
+    }
   });
 });
