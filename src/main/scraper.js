@@ -6,7 +6,17 @@
 
 const { BrowserWindow } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { importFromI10 } = require('../server/services/import-i10.js');
+const { importarProventos } = require('../shared/proventos-import.js');
+
+// Embed do agenda-parser como string para rodar no contexto da BrowserWindow
+// via executeJavaScript. Mantém o parser puro JS, testável em JSDOM.
+// Lido em runtime para evitar drift entre o módulo Node e o código inline.
+const AGENDA_PARSER_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'shared', 'agenda-parser.js'),
+  'utf8'
+);
 
 let scraperWindow = null;
 let getDb = null;
@@ -432,11 +442,19 @@ async function extractAllFIIDetalhes(db) {
   return { total: fiiList.length, sucessos: resultados.filter(r => r.ok).length, resultados };
 }
 
-// Lê a agenda de dividendos do I10 e retorna lista de dividendos futuros
-async function extractAgendaDividendos() {
+// Lê a agenda de dividendos do I10 e retorna lista de dividendos futuros.
+// PRD 03: captura coluna "Tipo" (Dividendo / Rendimento / Amortização / Bonificação),
+// tolera ordem variável, normaliza tipo via agenda-parser, dedup por chave lógica,
+// NÃO assume DIVIDENDO para tipo desconhecido (RF-006).
+//
+// Retorna um resumo com contagens por tipo (RF-022).
+async function extractAgendaDividendos(opts = {}) {
   if (!scraperWindow || scraperWindow.isDestroyed()) {
     throw new Error('Janela do scraper não está aberta');
   }
+  const persistir = opts.persistir !== false; // default: persiste
+  const reconciliar = opts.reconciliar !== false;
+
   await scraperWindow.loadURL('https://investidor10.com.br/fiis/dividendos/');
   await scraperWindow.webContents.executeJavaScript(`
     new Promise((resolve, reject) => {
@@ -451,61 +469,58 @@ async function extractAgendaDividendos() {
     });
   `);
 
-  const dividendos = await scraperWindow.webContents.executeJavaScript(`
+  // Extrai linhas normalizadas via agenda-parser inline (carregado do arquivo).
+  const parsed = await scraperWindow.webContents.executeJavaScript(`
     (() => {
-      const brnum = (s) => {
-        if (!s) return null;
-        const t = String(s).replace(/[^\\d,\\-.]/g, '');
-        return Number(t.replace(/\\./g, '').replace(',', '.')) || null;
+      ${AGENDA_PARSER_SRC};
+      const ap = AgendaParser;
+      const r = ap.extractAgendaDividendos(document);
+      return {
+        rows: r.rows,
+        table_found: r.table_found,
+        header_columns: r.header_columns,
+        missing_columns: r.missing_columns
       };
-      const brdate = (s) => {
-        if (!s) return null;
-        const m = String(s).match(/(\\d{2})\\/(\\d{2})\\/(\\d{4})/);
-        if (m) return m[3] + '-' + m[2] + '-' + m[1];
-        return null;
-      };
-      const out = [];
-      // Procura linhas com padrão: ticker + data-com + data-pagto + valor
-      const linhas = [...document.querySelectorAll('tr, .row, .linha')];
-      for (const row of linhas) {
-        const text = row.textContent;
-        const tickerMatch = text.match(/\\b([A-Z]{4}11)\\b/);
-        if (!tickerMatch) continue;
-        const valorMatch = text.match(/R\\$\\s*([\\d,]+)/);
-        if (!valorMatch) continue;
-        // Pega todas as datas
-        const datas = [...text.matchAll(/(\\d{2}\\/\\d{2}\\/\\d{4})/g)].map(m => brdate(m[1]));
-        out.push({
-          ticker: tickerMatch[1],
-          valor_por_cota: brnum(valorMatch[1]),
-          data_com: datas[0] || null,
-          data_pagto: datas[1] || datas[0] || null
-        });
-      }
-      return out;
     })()
   `);
 
-  // Persiste no DB (apenas para ativos existentes, não duplica)
-  if (getDb && dividendos.length) {
-    const findAtivo = getDb().prepare('SELECT id FROM ativos WHERE ticker = ?');
-    const findProv = getDb().prepare('SELECT id FROM proventos WHERE ativo_id=? AND data_pagto=?');
-    const ins = getDb().prepare('INSERT INTO proventos (ativo_id, data_com, data_pagto, valor_por_cota, tipo) VALUES (?,?,?,?,?)');
-    let inseridos = 0, ignorados = 0;
-    const trx = getDb().transaction(() => {
-      for (const d of dividendos) {
-        const a = findAtivo.get(d.ticker);
-        if (!a || !d.data_pagto || !d.valor_por_cota) { ignorados++; continue; }
-        const dup = findProv.get(a.id, d.data_pagto);
-        if (dup) { ignorados++; continue; }
-        ins.run(a.id, d.data_com, d.data_pagto, d.valor_por_cota, 'DIVIDENDO');
-        inseridos++;
-      }
-    });
-    trx();
-    return { total: dividendos.length, inseridos, ignorados, dividendos };
+  const resumo = {
+    total_lidos: parsed.rows.length,
+    table_found: parsed.table_found,
+    header_columns: parsed.header_columns,
+    missing_columns: parsed.missing_columns,
+    dividendos: parsed.rows
+  };
+
+  // PRD 03 caso 5: coluna "Tipo" ausente → falha controlada
+  if (parsed.missing_columns.tipo) {
+    return {
+      ...resumo,
+      erro: 'Coluna "Tipo" ausente na agenda do I10 — importação NÃO realizada para evitar classificação incorreta.',
+      inseridos: 0, duplicados: 0, reclassificados: 0, ignorados: parsed.rows.length,
+      por_tipo: {}, erros: [], tipo_desconhecidos: []
+    };
   }
-  return { total: dividendos.length, inseridos: 0, ignorados: dividendos.length, dividendos };
+
+  if (!persistir || !getDb) {
+    return resumo;
+  }
+
+  // Persiste via importarProventos (RF-007 dedup, RF-008 reconciliação, RF-022 contagens).
+  const importResult = importarProventos(getDb(), parsed.rows, {
+    reconciliarLegados: reconciliar
+  });
+
+  return {
+    ...resumo,
+    inseridos: importResult.inseridos,
+    duplicados: importResult.duplicados,
+    reclassificados: importResult.reclassificados,
+    ignorados: importResult.ignorados,
+    por_tipo: importResult.por_tipo,
+    erros: importResult.erros,
+    tipo_desconhecidos: importResult.tipo_desconhecidos
+  };
 }
 
 module.exports = { openScraper, checkReady, extractInvestidor10, extractAndImport, closeScraper, setDbGetter, extractFIIDetalhes, extractAllFIIDetalhes, extractAgendaDividendos };
