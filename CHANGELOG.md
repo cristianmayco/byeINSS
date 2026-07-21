@@ -54,6 +54,42 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - **Gates**: `schema-reviewer` APPROVE + `electron-security-reviewer` APPROVED.
 - **Total**: 330/330 vitest (era 219 antes) + 64/64 smoke. Zero regressão.
 
+### Added — PRD 02 sub-PR 4: fechamento de 4 gaps de UI (RF-018/019/021/022/023)
+
+- **RF-018 — Matriz Nominal×Real acessível**: botão "Detalhes" em cada FII
+  da tabela Posições expande uma `<table role="grid">` com 6 valores
+  (Nominal/Real × 1a/2a/5a), `aria-label` descritivo, fallback "—" para
+  valores ausentes.
+- **RF-019 — Filtros + ordenação em Posições**:
+  - `aplicarFiltroEOrdenacaoPosicoes` (lógica pura): filtro por
+    classificação (CONSISTENTE/ATENCAO/CRITICO/SEM_DADOS ou combinação),
+    ordenação numérica `dy_vs_5a_pct` ou `rentab_real_1a` (asc/desc),
+    nulls no fim.
+  - `renderizarFiltrosClassificacaoPosicoes` (UI): chips toggleáveis com
+    `aria-pressed` (TODOS + 4 classificações canônicas). Click → atualiza
+    hash `#posicoes?filtro=...` → re-render automático.
+  - Hash round-trip: `parseFiltroClassificacaoFromHash` / `gerarHashFiltro`.
+- **RF-021 — Contadores completos no bloco de alerta**: 5 atributos
+  `data-*` (`total-afetado`, `criticos`, `atencao`, `avaliada`, `sem-dados`)
+  no `<section data-bloco="indicadores-alerta">`. Título atualizado para
+  incluir "X crítico(s), Y atenção (Z de W avaliados)".
+- **RF-022 — Ação "Ver FIIs (N)"**: link no bloco de alerta com
+  `href="#posicoes?filtro=ATENCAO,CRITICO"` e `aria-label` descritivo.
+- **RF-023 — Estado vazio com ação específica**: quando não há FIIs
+  avaliáveis E (lista vazia OU todos INSUFICIENTE), renderiza
+  `<section data-bloco="indicadores-vazio">` com mensagem
+  "Indicadores históricos ainda não disponíveis" e botão
+  "Atualizar indicadores" que dispara
+  `POST /api/fiis/scraper/indicadores/resync` (toast em falha).
+- **CSS** (styles.css): `.indicadores-filtros`, `.indicadores-filtro-chip`,
+  `.indicadores-vazio`, `.rentab-matriz` — todos AA-friendly sobre tema
+  escuro.
+- **Testes**: `src/__tests__/renderer/indicadores-ui-rf18.test.js` (novo,
+  31 casos cobrindo matriz, toggle, filtros, ordenação, hash, chips,
+  contadores RF-021, ação Ver FIIs RF-022, empty state RF-023).
+- **Total**: 361/361 vitest (era 330 antes) + 64/64 smoke.
+  **PRD 02 100% coberto** — 25 RFs ✅.
+
 ### Fixed — Alertas de preço-teto
 
 - **Dashboard `/api/dashboard/alertas` nunca emitia alerta de preço-teto**: o endpoint só gerava `CONCENTRACAO` e `DY_ALTO`, embora o frontend já tivesse ícones para `PRECO_TETO` (🎯) e `OPORTUNIDADE` (🟢). Agora emite esses alertas para **todos** os FIIs ativos com preço-teto e cotação (independente de já possuir o ativo — vale como sinal de compra na watchlist). O guard `if (qtd <= 0) return` deixava de fora FIIs não detidos; alertas de preço agora rodam antes desse guard, enquanto concentração/DY seguem restritos a posições detidas.

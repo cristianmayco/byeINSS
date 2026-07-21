@@ -103,7 +103,7 @@ Já identificadas via WebFetch no I10 (GTWR11 usado como exemplo). O scraper atu
 
 ### 2.2. [CRÍTICA] DY médio 5 anos + rentabilidade real (IPCA-ajustada) ✅ **ENTREGUE (PRD 02, schema 1.3)**
 
-**Status:** 3 sub-PRs commitados (`bc5d561`, `c40fe48`, `be61df9`). 330/330 vitest + 64/64 smoke verde. Gates `schema-reviewer` APPROVE + `electron-security-reviewer` APPROVED.
+**Status:** 4 sub-PRs commitados (`bc5d561`, `c40fe48`, `be61df9`, `b1f3d05`). 361/361 vitest + 64/64 smoke verde. **100% dos 25 RFs cobertos.** Gates `schema-reviewer` APPROVE + `electron-security-reviewer` APPROVED.
 
 **Problema.** DY atual em FII pode ser "armadilha sustentável" — alto porque o preço caiu, não porque a distribuição subiu. O cruzamento DY atual vs DY 5y revela isso. Da mesma forma, "Meu FII rendeu 15% no ano!" pode ser ilusão se inflação foi 8%.
 
