@@ -616,85 +616,214 @@ window.delLancamento = async function(id) {
 };
 
 // ============ PROVENTOS ============
-async function renderProventos(el) {
-  const [proventos, ativos, projecao] = await Promise.all([
-    api('/api/proventos'),
+// PRD 03: KPIs separados (distribuíveis 12M vs amortizações 12M),
+// filtros por tipo, gráfico empilhado Chart.js, badges de tipo
+// (texto + cor + role=status), projeção distribuível separada de
+// amortizações futuras explícitas.
+async function renderProventos(el, params) {
+  // 1) Ler filtros do hash (RF-013) — params.tipos já vem do router se houver.
+  const tiposAtivos = (params && params.tipos)
+    ? new Set(String(params.tipos).split(',').map(s => s.toUpperCase()))
+    : new Set();
+  const temFiltro = tiposAtivos.size > 0;
+  const tiposParamQS = temFiltro
+    ? `?tipos=${[...tiposAtivos].join(',')}`
+    : '';
+  const inicioFiltro = (params && params.inicio) || '';
+  const fimFiltro = (params && params.fim) || '';
+
+  // 2) Carregar dados em paralelo.
+  const urlProvs = `/api/proventos${temFiltro ? tiposParamQS : ''}`;
+  const urlMensal = `/api/dashboard/proventos-mensais${tiposParamQS}${inicioFiltro ? (temFiltro ? '&' : '?') + 'inicio=' + inicioFiltro : ''}${fimFiltro ? (inicioFiltro || tiposParamQS ? '&' : '?') + 'fim=' + fimFiltro : ''}`;
+  const [proventos, ativos, projecao, serieMensal] = await Promise.all([
+    api(urlProvs),
     api('/api/ativos'),
-    api('/api/dashboard/projecao-proventos')
+    api('/api/dashboard/projecao-proventos'),
+    api(urlMensal)
   ]);
-  // Agrupa por ano-mês
-  const porMes = {};
-  proventos.forEach(p => {
-    const key = p.data_pagto.slice(0, 7);
-    porMes[key] = (porMes[key] || 0) + p.valor_por_cota;
-  });
-  const meses = Object.keys(porMes).sort().reverse();
+
+  // 3) KPIs (RF-016): distribuíveis 12M, amortizações 12M, projeção 12M.
+  // `proventos` já veio filtrado pelo backend. Calcula totais via API.
+  const kpiResp = await api('/api/dashboard/resumo').catch(() => null);
+  const distribuiveis12m = kpiResp ? Number(kpiResp.proventos_12m || 0) : 0;
+  const amortizacoes12m = kpiResp ? Number(kpiResp.amortizacoes_12m || 0) : 0;
+  const projecaoDistribuivel12m = Number(projecao.total_distribuivel_anual || 0);
+
+  // 4) Render.
   el.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Proventos</div><div class="page-subtitle">Dividendos, atualização em lote e projeção anual</div></div>
-      <button class="btn btn-primary" onclick="openProvBatchModal()">📋 Atualizar dividendos do mês</button>
+      <div><div class="page-title">Proventos</div>
+      <div class="page-subtitle">Renda distribuível, amortizações e projeção anual (PRD 03)</div></div>
+      <button class="btn btn-primary" onclick="openProvBatchModal()">📋 Atualizar proventos do mês</button>
+    </div>
+
+    <div class="filter-bar" style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;" role="group" aria-label="Filtros por tipo">
+      <span style="font-size:12px;color:#94a3b8;margin-right:4px;">Tipos:</span>
+      <span id="filtro-tipos-proventos">${renderFiltroTipos(tiposAtivos)}</span>
+      ${temFiltro ? `<a href="#proventos" class="btn-filtro-tipo"
+        style="background:transparent;border:1px dashed #f97316;color:#fdba74;padding:6px 12px;border-radius:6px;font-size:12px;text-decoration:none;">
+        Limpar filtros
+      </a>` : ''}
     </div>
 
     <div class="kpi-grid">
-      <div class="kpi"><div class="kpi-label">Proventos 12M</div>
-        <div class="kpi-value">${brl(Object.values(porMes).reduce((a,b)=>a+b,0))}</div>
-        <div class="kpi-delta">${meses.length} meses com pagamento</div>
+      <div class="kpi">
+        <div class="kpi-label">Distribuíveis 12M</div>
+        <div class="kpi-value">${brl(distribuiveis12m)}</div>
+        <div class="kpi-delta">Dividendos + Rendimentos</div>
       </div>
-      <div class="kpi"><div class="kpi-label">Projeção mensal (próx. 12M)</div>
-        <div class="kpi-value pos">${brl(projecao.total_mensal)}</div>
-        <div class="kpi-delta">baseado no último dividendo de cada FII</div>
+      <div class="kpi">
+        <div class="kpi-label">Amortizações 12M</div>
+        <div class="kpi-value">${brl(amortizacoes12m)}</div>
+        <div class="kpi-delta">Devolução de capital</div>
       </div>
-      <div class="kpi"><div class="kpi-label">Projeção anual (próx. 12M)</div>
-        <div class="kpi-value pos">${brl(projecao.total_anual)}</div>
-        <div class="kpi-delta">${projecao.detalhes.length} FIIs pagantes</div>
+      <div class="kpi">
+        <div class="kpi-label">Projeção distribuível 12M</div>
+        <div class="kpi-value pos">${brl(projecaoDistribuivel12m)}</div>
+        <div class="kpi-delta">${(projecao.detalhes || []).filter(d => !d.sem_base_recorrente).length} FIIs com base</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📊 Proventos mensais por tipo</div>
+      <div style="display:flex;gap:14px;font-size:11px;color:#94a3b8;margin:6px 0;">
+        <span><span style="color:#22c55e;">■</span> Dividendos</span>
+        <span><span style="color:#3b82f6;">■</span> Rendimentos</span>
+        <span><span style="color:#f97316;">■</span> Amortizações</span>
+        <span><span style="color:#9ca3af;">■</span> Bonificações</span>
+      </div>
+      <div class="chart-container"><canvas id="chart-proventos" aria-label="Gráfico mensal empilhado de proventos por tipo" role="img"></canvas></div>
+      <div class="visually-hidden" id="chart-proventos-text-table">
+        ${(serieMensal || []).map(m =>
+          `${m.mes}: distribuíveis ${brl(m.distribuiveis)}, amortizações ${brl(m.amortizacoes)}, bonificações ${brl(m.bonificacoes)}`
+        ).join(' | ')}
       </div>
     </div>
 
     <div class="card-row">
-      <div class="card">
-        <div class="card-title">📈 Projeção por FII (próximos 12 meses)</div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Ticker</th><th>Qtd</th><th>Últ. dividendo</th><th>Receita mensal</th><th>Receita anual</th><th>DY atual</th></tr></thead>
-          <tbody>${projecao.detalhes.length ? projecao.detalhes.map(d => `
-            <tr>
-              <td><strong>${d.ticker}</strong> <span class="tag blue">${d.tipo}</span></td>
-              <td>${d.qtd}</td>
-              <td>${brl(d.ultimo_dividendo)}</td>
-              <td class="pos">${brl(d.mensal)}</td>
-              <td class="pos">${brl(d.anual)}</td>
-              <td>${pct(d.dy_anual)}</td>
-            </tr>`).join('') : '<tr><td colspan="6" class="empty-state">Cadastre dividendos em "Atualizar dividendos do mês" para ver a projeção.</td></tr>'}</tbody>
-        </table></div>
-      </div>
-    </div>
-
-    <div class="card-row">
-      <div class="card">
-        <div class="card-title">Total por mês</div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Mês</th><th>Total recebido</th></tr></thead>
-          <tbody>${meses.length ? meses.map(m => `<tr><td>${m}</td><td><strong>${brl(porMes[m])}</strong></td></tr>`).join('') : '<tr><td colspan="2" class="empty-state">Sem proventos registrados.</td></tr>'}</tbody>
-        </table></div>
-      </div>
       <div class="card">
         <div class="card-title">Histórico recente</div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Pagto</th><th>Ativo</th><th>Valor/cota</th><th>Tipo</th></tr></thead>
-          <tbody>${proventos.length ? proventos.slice(0, 30).map(p => `
-            <tr><td>${p.data_pagto}</td><td><strong>${p.ticker}</strong></td><td>${brl(p.valor_por_cota)}</td><td class="muted">${p.tipo}</td></tr>
-          `).join('') : '<tr><td colspan="4" class="empty-state">Sem proventos.</td></tr>'}</tbody>
+          <thead><tr><th>Pagto</th><th>Ticker</th><th>Valor/cota</th><th>Qtd elegível</th><th>Total</th><th>Tipo</th></tr></thead>
+          <tbody>
+            ${proventos.length ? proventos.slice(0, 30).map(p => `
+              <tr>
+                <td>${escapeHtml(p.data_pagto)}</td>
+                <td><strong>${escapeHtml(p.ticker)}</strong></td>
+                <td>${brl(p.valor_por_cota)}</td>
+                <td>${p.quantidade_elegivel || 0}</td>
+                <td>${brl(p.valor_total || 0)}</td>
+                <td>${badgeTipo(p.tipo)}</td>
+              </tr>
+            `).join('') : emptyStateProventos(tiposAtivos)}
+          </tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📈 Projeção recorrente (próximos 12 meses)</div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>FII</th><th>Qtd</th><th>Últ. distribuível</th><th>Mensal</th><th>Anual</th><th>DY dist.</th></tr></thead>
+          <tbody>
+            ${(projecao.detalhes || []).length ? projecao.detalhes.map(d => `
+              <tr title="${d.sem_base_recorrente ? 'Sem base recorrente' : (d.desatualizado ? 'Base desatualizada (>90d)' : '')}">
+                <td><strong>${escapeHtml(d.ticker)}</strong></td>
+                <td>${d.qtd}</td>
+                <td>${d.ultimo_distribuivel_por_cota ? brl(d.ultimo_distribuivel_por_cota) + ' (' + escapeHtml(d.ultimo_pagto_distribuivel || '—') + ')' : '<span class="muted">Sem base</span>'}</td>
+                <td class="pos">${brl(d.mensal_distribuivel)}</td>
+                <td class="pos">${brl(d.anual_distribuivel)}</td>
+                <td>${pct(d.dy_anual_distribuivel)}</td>
+              </tr>
+            `).join('') : '<tr><td colspan="6" class="empty-state">Sem proventos registrados.</td></tr>'}
+          </tbody>
         </table></div>
       </div>
     </div>
+
+    <div class="card">
+      <div class="card-title">🔄 Amortizações previstas (próximos 12 meses)</div>
+      <p class="muted" style="font-size:12px;margin:6px 0;">Apenas eventos explícitos da agenda; <strong>não</strong> anualiza amortizações passadas.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>FII</th><th>Pagamento</th><th>Valor/cota</th><th>Qtd estimada</th><th>Total estimado</th></tr></thead>
+        <tbody>
+          ${(projecao.amortizacoes_previstas || []).length ? projecao.amortizacoes_previstas.map(a => `
+            <tr>
+              <td><strong>${escapeHtml(a.ticker)}</strong> ${badgeTipo('AMORTIZACAO')}</td>
+              <td>${escapeHtml(a.data_pagto)}</td>
+              <td>${brl(a.valor_por_cota)}</td>
+              <td>${a.quantidade_estimada}</td>
+              <td>${brl(a.valor_total_estimado)}</td>
+            </tr>
+          `).join('') : '<tr><td colspan="5" class="empty-state">Nenhuma amortização prevista na agenda.</td></tr>'}
+        </tbody>
+      </table></div>
+    </div>
     <div id="modal-container"></div>
   `;
+
+  // 5) Bind nos botões de filtro (RF-012).
+  el.querySelectorAll('.btn-filtro-tipo[data-tipo]').forEach(b => {
+    b.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const t = b.dataset.tipo;
+      let qs;
+      if (t === '__all') {
+        qs = '';
+      } else if (tiposAtivos.has(t)) {
+        const n = new Set(tiposAtivos); n.delete(t);
+        qs = serializarTiposParaHash(n);
+      } else {
+        const n = new Set(tiposAtivos); n.add(t);
+        qs = serializarTiposParaHash(n);
+      }
+      navigate('#proventos' + qs);
+    });
+  });
+
+  // 6) Chart.js empilhado — destrói antes para evitar leak (RF-004 performance).
+  const canvas = el.querySelector('#chart-proventos');
+  if (canvas && typeof Chart !== 'undefined') {
+    const ds = buildChartStackedDataset(serieMensal || []);
+    const stacked = new Chart(canvas, {
+      type: 'bar',
+      data: { labels: ds.labels, datasets: ds.datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: prefersReducedMotion() ? false : { duration: 250 },
+        scales: {
+          x: { stacked: true, ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+          y: { stacked: true, ticks: { color: '#94a3b8', callback: v => brl(v) }, grid: { color: '#1e293b' } }
+        },
+        plugins: {
+          legend: { labels: { color: '#cbd5e1' } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${brl(ctx.parsed.y)}`,
+              footer: (items) => {
+                const total = items.reduce((s, i) => s + Number(i.parsed.y || 0), 0);
+                return `Total: ${brl(total)}`;
+              }
+            }
+          }
+        }
+      }
+    });
+    chartsToDestroy.push(stacked);
+  }
+
   window._ativosCache = ativos;
 }
 
+function prefersReducedMotion() {
+  return typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+// PRD 03 RF-010: modal em lote com múltiplas parcelas por FII (uma linha por
+// ticker + tipo). Permite registrar dividendo + amortização na mesma data.
 window.openProvBatchModal = function() {
   const ativos = (window._ativosCache || []).filter(a => a.ativo);
   const hoje = todayISO();
-  // Calcular último dividendo pago por ativo
+  // Calcula o último provento por ticker para usar como sugestão
   api('/api/proventos').then(proventos => {
     const ultimos = {};
     proventos.forEach(p => {
@@ -702,41 +831,72 @@ window.openProvBatchModal = function() {
         ultimos[p.ticker] = p;
       }
     });
+    // Pré-popula com uma linha por ticker (assume DIVIDENDO);
+    // o usuário pode adicionar parcelas extras (RF-010).
+    const iniciais = ativos.map(a => ({
+      parcela_id: 'p_' + a.ticker,
+      ticker: a.ticker,
+      tipo: (ultimos[a.ticker] && ultimos[a.ticker].tipo) || 'DIVIDENDO',
+      valor_por_cota: ultimos[a.ticker] ? ultimos[a.ticker].valor_por_cota : 0
+    }));
     const html = `
       <div class="modal-backdrop" onclick="closeModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:grid;place-items:center;z-index:50;overflow:auto;padding:20px;">
-        <div class="card" style="width:720px;max-width:95vw;max-height:90vh;overflow:auto;" onclick="event.stopPropagation()">
-          <div class="card-title">📋 Atualizar dividendos do mês</div>
-          <p class="muted" style="margin-bottom:12px;">Preencha o valor do dividendo pago por cada FII no mês. Deixe em branco para ignorar. Apenas FIIs com posição aberta aparecem.</p>
-          <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+        <div class="card" style="width:760px;max-width:95vw;max-height:90vh;overflow:auto;" onclick="event.stopPropagation()">
+          <div class="card-title">📋 Atualizar proventos do mês</div>
+          <p class="muted" style="margin-bottom:12px;">Registre as parcelas por FII e tipo. É permitido registrar mais de um tipo para o mesmo FII e data (ex: dividendo + amortização).</p>
+          <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
             <div><label class="form-label">Data pagamento</label><input id="b-pagto" type="date" value="${hoje}"></div>
             <div><label class="form-label">Data-com (opcional)</label><input id="b-com" type="date"></div>
-            <div style="display:flex;align-items:end;"><button class="btn btn-secondary" onclick="preencherUltimos()">↺ Usar últimos valores</button></div>
           </div>
           <table style="font-size:12px;">
-            <thead><tr><th>Ticker</th><th>Último dividendo</th><th>Valor (R$)</th></tr></thead>
-            <tbody>
-              ${ativos.map(a => {
-                const u = ultimos[a.ticker];
-                return `<tr>
-                  <td><strong>${a.ticker}</strong></td>
-                  <td class="muted">${u ? brl(u.valor_por_cota) + ' (' + u.data_pagto + ')' : '—'}</td>
-                  <td><input type="number" step="0.0001" data-ticker="${a.ticker}" placeholder="${u ? u.valor_por_cota : '0'}" style="width:100%;padding:4px 8px;font-size:12px;"></td>
-                </tr>`;
-              }).join('')}
-            </tbody>
+            <thead><tr><th>FII</th><th>Tipo</th><th>Valor por cota</th><th>Ação</th></tr></thead>
+            <tbody id="batch-linhas">${renderLinhasBatch(iniciais)}</tbody>
           </table>
+          <div style="display:flex;gap:8px;margin-top:12px;align-items:center;justify-content:space-between;">
+            <div>
+              <select id="batch-ticker-novo"
+                style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 10px;border-radius:6px;font-size:12px;">
+                ${ativos.map(a => `<option value="${a.ticker}">${a.ticker}</option>`).join('')}
+              </select>
+              <button type="button" class="btn btn-secondary" id="batch-add"
+                style="margin-left:6px;padding:6px 12px;">+ Adicionar parcela</button>
+            </div>
+          </div>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
             <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-            <button class="btn btn-primary" onclick="saveProvBatch()">Salvar dividendos</button>
+            <button class="btn btn-primary" onclick="saveProvBatch()">Salvar proventos</button>
           </div>
         </div>
       </div>`;
     document.getElementById('modal-container').innerHTML = html;
+    const tbody = document.getElementById('batch-linhas');
+    document.getElementById('batch-add').onclick = () => {
+      const tk = document.getElementById('batch-ticker-novo').value;
+      const nova = { parcela_id: 'p_' + Date.now(), ticker: tk, tipo: 'DIVIDENDO', valor_por_cota: 0 };
+      // Anexa evitando duplicar existente
+      if ([...tbody.querySelectorAll('tr')].some(tr => tr.dataset.ticker === tk && tr.querySelector('select[data-campo=tipo]').value === 'DIVIDENDO')) {
+        // já existe uma linha DIVIDENDO para esse ticker — permite coexistir (RF-010)
+      }
+      const html = renderLinhasBatch([nova]);
+      tbody.insertAdjacentHTML('beforeend', html);
+      bindLinhasEvents(tbody);
+    };
+    bindLinhasEvents(tbody);
   });
 };
 
+function bindLinhasEvents(tbody) {
+  tbody.querySelectorAll('button[data-campo=remover]').forEach(btn => {
+    btn.onclick = () => btn.closest('tr').remove();
+  });
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const select = tr.querySelector('select[data-campo=tipo]');
+    if (select) tr.dataset.ticker = select.closest('tr').querySelector('strong')?.textContent || '';
+  });
+}
+
 window.preencherUltimos = function() {
-  document.querySelectorAll('#modal-container input[data-ticker]').forEach(inp => {
+  document.querySelectorAll('#batch-linhas tr input[data-campo=valor]').forEach(inp => {
     if (inp.placeholder && inp.placeholder !== '0') inp.value = inp.placeholder;
   });
 };
@@ -744,15 +904,19 @@ window.preencherUltimos = function() {
 window.saveProvBatch = async function() {
   const data_pagto = document.getElementById('b-pagto').value;
   const data_com = document.getElementById('b-com').value || null;
-  const dividendos = [];
-  document.querySelectorAll('#modal-container input[data-ticker]').forEach(inp => {
-    const v = parseFloat(inp.value);
-    if (v && v > 0) dividendos.push({ ticker: inp.dataset.ticker, valor_por_cota: v });
+  const proventos = [];
+  document.querySelectorAll('#batch-linhas tr').forEach(tr => {
+    const tk = tr.querySelector('strong')?.textContent;
+    const tipo = tr.querySelector('select[data-campo=tipo]')?.value;
+    const v = parseFloat(tr.querySelector('input[data-campo=valor]')?.value);
+    if (tk && tipo && v > 0) {
+      proventos.push({ ticker: tk, valor_por_cota: v, tipo });
+    }
   });
-  if (!dividendos.length) { toast('Preencha ao menos um valor', 'error'); return; }
+  if (!proventos.length) { toast('Preencha ao menos um valor', 'error'); return; }
   try {
-    const r = await api('/api/proventos/batch', { method: 'POST', body: { data_pagto, data_com, dividendos } });
-    toast(`✓ ${r.inseridos} salvos, ${r.duplicados} duplicados, ${r.ignorados} ignorados`);
+    const r = await api('/api/proventos/batch', { method: 'POST', body: { data_pagto, data_com, proventos } });
+    toast(`✓ ${r.inseridos} salvos, ${r.duplicados} duplicados, ${r.reclassificados || 0} reclassificados, ${r.ignorados} ignorados`);
     closeModal();
     navigate('proventos');
   } catch (e) { toast(e.message, 'error'); }
@@ -771,7 +935,7 @@ window.openProvModal = function() {
           <div class="form-row"><label class="form-label">Data-com (opcional)</label><input id="m-com" type="date"></div>
           <div class="form-row"><label class="form-label">Valor por cota</label><input id="m-valor" type="number" step="0.0001"></div>
           <div class="form-row"><label class="form-label">Tipo</label>
-            <select id="m-tipo"><option>DIVIDENDO</option><option>RENDIMENTO</option><option>BONIFICACAO</option></select></div>
+            <select id="m-tipo"><option>DIVIDENDO</option><option>RENDIMENTO</option><option>AMORTIZACAO</option><option>BONIFICACAO</option></select></div>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
           <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
