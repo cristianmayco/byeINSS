@@ -160,13 +160,14 @@ describe('badgeDyVs5aHtml + rentabReal12MHtml (variantes string)', () => {
 });
 
 describe('renderizarBlocoAlertaDashboard', () => {
-  test('não renderiza nada quando lista vazia', () => {
+  test('não renderiza nada quando lista vazia (mas mostra estado vazio RF-023)', () => {
     const mount = document.createElement('div');
     document.body.appendChild(mount);
     const res = indicadoresUI.renderizarBlocoAlertaDashboard(mount, []);
     expect(res.renderizado).toBe(false);
     expect(res.total).toBe(0);
-    expect(mount.children.length).toBe(0);
+    // RF-023: estado vazio informativo é renderizado
+    expect(mount.querySelector('[data-bloco="indicadores-vazio"]')).not.toBeNull();
   });
 
   test('não renderiza quando só há FIIs CONSISTENTE/INDEFINIDO', () => {

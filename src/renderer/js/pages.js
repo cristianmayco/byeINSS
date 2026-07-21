@@ -108,7 +108,23 @@ async function renderDashboard(el) {
     window.byeINSSIndicadoresUI.renderizarBlocoAlertaDashboard(
       document.getElementById('dashboard-indicadores-alerta'),
       indicadoresItens,
-      { maxItens: 10 }
+      {
+        maxItens: 10,
+        // RF-023 — callback do botão "Atualizar indicadores" no estado vazio
+        onAtualizar: () => {
+          api('/api/fiis/scraper/indicadores/resync', { method: 'POST', body: {} })
+            .then(() => window.location.reload())
+            .catch(err => {
+              console.error('falha ao atualizar indicadores:', err);
+              const toast = document.getElementById('toast');
+              if (toast) {
+                toast.textContent = 'Falha ao atualizar indicadores. Verifique os logs.';
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 4000);
+              }
+            });
+        }
+      }
     );
   }
 
@@ -286,6 +302,25 @@ async function renderPosicoes(el) {
   (indicadoresResp && indicadoresResp.data ? indicadoresResp.data : []).forEach(it => {
     indicadoresByTicker[(it.ticker || '').toUpperCase()] = it;
   });
+
+  // PRD 02 sub-PR 4 (RF-019) — filtro de classificação via hash + ordenação por dy_vs_5a_pct
+  const filtroAtivo = window.byeINSSIndicadoresUI
+    ? window.byeINSSIndicadoresUI.parseFiltroClassificacaoFromHash(location.hash)
+    : null;
+  // Mapa ticker → item para aplicar filtro
+  const allIndicadoresItens = Object.values(indicadoresByTicker);
+  const itensFiltrados = window.byeINSSIndicadoresUI
+    ? window.byeINSSIndicadoresUI.aplicarFiltroEOrdenacaoPosicoes(allIndicadoresItens, {
+        classificacao: filtroAtivo,
+        ordem: 'dy_vs_5a_pct',
+        direcao: 'asc',
+        nulosNoFim: true
+      })
+    : allIndicadoresItens;
+  const tickersFiltrados = filtroAtivo
+    ? new Set(itensFiltrados.map(i => (i.ticker || '').toUpperCase()))
+    : null;
+
   el.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Posições</div><div class="page-subtitle">${ativos.length} ativos na carteira</div></div>
@@ -293,6 +328,7 @@ async function renderPosicoes(el) {
     </div>
     <div class="card">
       <div class="table-wrap">
+        <div id="posicoes-filtros-indicadores"></div>
         <table>
           <thead><tr>
             <th>Ticker</th><th>Tipo</th><th>Segmento</th>
@@ -304,7 +340,15 @@ async function renderPosicoes(el) {
             <th>Nota</th><th>Ações</th>
           </tr></thead>
           <tbody>
-            ${ativos.filter(a => (byTicker[a.ticker]?.qtd || 0) > 0).map(a => {
+            ${ativos.filter(a => {
+              const qtd = byTicker[a.ticker]?.qtd || 0;
+              if (qtd <= 0) return false;
+              // Aplica filtro de classificação se ativo
+              if (tickersFiltrados) {
+                return tickersFiltrados.has((a.ticker || '').toUpperCase());
+              }
+              return true;
+            }).map(a => {
               const p = byTicker[a.ticker] || {};
               const indicador = indicadoresByTicker[(a.ticker || '').toUpperCase()] || null;
               const varClass = p.variacao_pct >= 0 ? 'pos' : 'neg';
@@ -327,6 +371,10 @@ async function renderPosicoes(el) {
               const rentCell = window.byeINSSIndicadoresUI && a.tipo === 'FII'
                 ? window.byeINSSIndicadoresUI.rentabReal12MHtml(indicador)
                 : '<span class="muted">—</span>';
+              // PRD 02 sub-PR 4 (RF-018) — botão "Detalhes" abre matriz de rentabilidade
+              const detailButton = (window.byeINSSIndicadoresUI && a.tipo === 'FII' && indicador)
+                ? `<button type="button" class="btn btn-sm btn-secondary rentab-matriz-toggle-inline" data-rentab-matriz-ticker="${escapeHtml(a.ticker)}" aria-label="Ver detalhes de rentabilidade para ${safeTicker}">Detalhes</button>`
+                : '';
               return `<tr>
                 <td>${tickerCell}</td>
                 <td><span class="tag blue">${safeType}</span></td>
@@ -343,7 +391,7 @@ async function renderPosicoes(el) {
                 <td>${pct(p.pct_carteira)}</td>
                 <td>${pct(a.alvo_pct_carteira)}</td>
                 <td>${a.nota || '—'}</td>
-                <td>${editButton}</td>
+                <td>${detailButton}${editButton}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -352,6 +400,63 @@ async function renderPosicoes(el) {
     </div>
     <div id="modal-container"></div>
   `;
+
+  // PRD 02 sub-PR 4 (RF-019) — chips de filtro de classificação
+  if (window.byeINSSIndicadoresUI) {
+    const mountFiltros = document.getElementById('posicoes-filtros-indicadores');
+    if (mountFiltros) {
+      const chips = window.byeINSSIndicadoresUI.renderizarFiltrosClassificacaoPosicoes({ ativo: filtroAtivo });
+      mountFiltros.appendChild(chips);
+      chips.querySelectorAll('button[data-value]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const v = btn.dataset.value;
+          if (v === 'TODOS') {
+            location.hash = '#posicoes';
+            return;
+          }
+          const atual = window.byeINSSIndicadoresUI.parseFiltroClassificacaoFromHash(location.hash) || [];
+          let novo;
+          if (atual.includes(v)) {
+            novo = atual.filter(x => x !== v);
+          } else {
+            novo = [...atual, v];
+          }
+          location.hash = window.byeINSSIndicadoresUI.gerarHashFiltro(novo);
+        });
+      });
+    }
+  }
+
+  // PRD 02 sub-PR 4 (RF-018) — listeners dos botões "Detalhes" inline
+  if (window.byeINSSIndicadoresUI) {
+    el.querySelectorAll('button[data-rentab-matriz-ticker]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ticker = btn.dataset.rentabMatrizTicker;
+        const ind = indicadoresByTicker[(ticker || '').toUpperCase()];
+        if (!ind) return;
+        const tr = btn.closest('tr');
+        const controlsId = `rentab-matriz-${ticker}`;
+        const expanded = btn.getAttribute('aria-expanded') === 'true';
+        if (expanded) {
+          btn.setAttribute('aria-expanded', 'false');
+          btn.textContent = 'Detalhes';
+          const existing = document.getElementById(controlsId);
+          if (existing) existing.remove();
+        } else {
+          btn.setAttribute('aria-expanded', 'true');
+          btn.textContent = 'Ocultar';
+          const container = document.createElement('tr');
+          container.id = controlsId;
+          container.className = 'rentab-matriz-row';
+          const td = document.createElement('td');
+          td.colSpan = 99;
+          td.appendChild(window.byeINSSIndicadoresUI.renderizarMatrizRentabilidade(ind));
+          container.appendChild(td);
+          tr.insertAdjacentElement('afterend', container);
+        }
+      });
+    });
+  }
 }
 
 window.openAtivoModal = function(id = null) {

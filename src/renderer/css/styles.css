@@ -534,3 +534,83 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-size: 12px;
   color: var(--text-mute);
 }
+.indicadores-alerta__acao {
+  display: inline-flex;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+/* PRD 02 sub-PR 4 — Empty state (RF-023) */
+.indicadores-vazio {
+  border-left: 4px solid #94a3b8;
+  background: rgba(148,163,184,0.06);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.indicadores-vazio__msg {
+  margin: 0;
+  flex: 1;
+  min-width: 200px;
+  color: var(--text-mute);
+  font-size: 13px;
+}
+
+/* PRD 02 sub-PR 4 — Filter chips (RF-019) */
+.indicadores-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 8px 0;
+}
+.indicadores-filtro-chip {
+  border-radius: 999px;
+  border: 1px solid var(--border, #2a323d);
+  background: transparent;
+  color: var(--text-mute, #94a3b8);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.indicadores-filtro-chip:hover { background: rgba(148,163,184,0.10); }
+.indicadores-filtro-chip[aria-pressed="true"] {
+  background: rgba(56,189,248,0.18);
+  color: #7dd3fc;
+  border-color: rgba(56,189,248,0.4);
+}
+
+/* PRD 02 sub-PR 4 — Rentabilidade matriz (RF-018) */
+.rentab-matriz-row td { background: rgba(56,189,248,0.04); }
+.rentab-matriz {
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 8px auto;
+}
+.rentab-matriz th,
+.rentab-matriz td {
+  padding: 4px 12px;
+  text-align: right;
+  border: 1px solid rgba(148,163,184,0.15);
+}
+.rentab-matriz thead th {
+  background: rgba(56,189,248,0.06);
+  color: var(--text-mute, #94a3b8);
+  font-weight: 600;
+  text-align: center;
+}
+.rentab-matriz tbody th[scope="row"] {
+  background: rgba(148,163,184,0.06);
+  color: var(--text, #e7ebf0);
+  text-align: left;
+  font-weight: 600;
+}
+.rentab-matriz td { font-variant-numeric: tabular-nums; }
+
+.rentab-matriz-toggle-inline { margin-right: 4px; }
