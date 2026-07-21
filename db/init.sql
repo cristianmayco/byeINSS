@@ -79,10 +79,14 @@ CREATE TABLE IF NOT EXISTS proventos (
   data_com TEXT,              -- data-com (direito)
   data_pagto TEXT NOT NULL,   -- data pagamento
   valor_por_cota REAL NOT NULL,
-  tipo TEXT DEFAULT 'DIVIDENDO',  -- DIVIDENDO | RENDIMENTO | BONIFICACAO
+  -- Migration 1.4: AMORTIZACAO adicionado (PRD 03).
+  -- Tipos: DIVIDENDO | RENDIMENTO | BONIFICACAO | AMORTIZACAO.
+  tipo TEXT NOT NULL DEFAULT 'DIVIDENDO'
+    CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')),
   FOREIGN KEY (ativo_id) REFERENCES ativos(id)
 );
 CREATE INDEX IF NOT EXISTS idx_proventos_ativo_data ON proventos(ativo_id, data_pagto DESC);
+CREATE INDEX IF NOT EXISTS idx_proventos_tipo_data ON proventos(tipo, data_pagto DESC);
 
 CREATE TABLE IF NOT EXISTS metas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,8 +158,8 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('alerta_concentracao_pct', '10.0'),
   ('dy_minimo_global', '8.0'),
   ('moeda', 'BRL'),
-  -- Migration 1.2: schema versionada (atualizada no INSERT OR REPLACE abaixo)
-  ('versao_schema', '1.3'),
+  -- Migration 1.2/1.3 → 1.4: schema versionada (atualizada no INSERT OR REPLACE abaixo)
+  ('versao_schema', '1.4'),
   -- Thresholds de preço (em % do preço-teto)
   ('pct_muito_barato', '85.0'),   -- até 85% do preço-teto = muito barato
   ('pct_barato', '100.0'),         -- até 100% = no teto
