@@ -275,9 +275,9 @@ function runMigrationTests() {
       expect(cols).toEqual(['version', 'description', 'applied_at', 'duration_ms', 'rows_before', 'rows_after', 'reversible']);
     });
 
-    it('versao_schema = 1.2', () => {
+    it('versao_schema = 1.3', () => {
       const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-      expect(v.valor).toBe('1.2');
+      expect(v.valor).toBe('1.3');
     });
 
     it('ativos contém 7 novas colunas do PRD 12', () => {
@@ -309,6 +309,24 @@ function runMigrationTests() {
       expect(r.c).toBe(1);
     });
 
+    it('ativos contém 9 novas colunas do PRD 02', () => {
+      const cols = db.prepare('PRAGMA table_info(ativos)').all().map(c => c.name);
+      const expectedSubset = [
+        'dy_medio_5a',
+        'rentab_nominal_1a', 'rentab_nominal_2a', 'rentab_nominal_5a',
+        'rentab_real_1a', 'rentab_real_2a', 'rentab_real_5a',
+        'dy_medio_5a_fonte', 'dy_medio_5a_atualizado_em'
+      ];
+      const missing = expectedSubset.filter(c => !cols.includes(c));
+      if (missing.length) throw new Error(`faltando colunas PRD 02: ${missing.join(',')}`);
+    });
+
+    it('seed indicador_dy_vs_5a_abaixo_pct = 95', () => {
+      const v = db.prepare("SELECT valor FROM config WHERE chave='indicador_dy_vs_5a_abaixo_pct'").get();
+      if (!v) throw new Error('config indicador_dy_vs_5a_abaixo_pct não foi seedado');
+      expect(v.valor).toBe('95');
+    });
+
     it('integrity_check retorna ok', () => {
       const r = db.prepare('PRAGMA integrity_check').get();
       expect(r.integrity_check).toBe('ok');
@@ -316,7 +334,7 @@ function runMigrationTests() {
   });
 
   describe('runMigrations aplica 1.2 em DB legacy 1.1 (regression)', () => {
-    it('7 colunas adicionadas em ativos legacy; fii_scraper_log criada; versao_schema bumped', () => {
+    it('7 colunas PRD 12 + 9 colunas PRD 02 adicionadas em ativos legacy; versao_schema bumped para 1.3', () => {
       const db = new Database(':memory:');
       db.pragma('foreign_keys = ON');
       db.exec(`
@@ -344,13 +362,18 @@ function runMigrationTests() {
         'reajuste_percentual',
         'vencimento_medio_origem',
         'vencimento_medio_coletado_em',
-        'alerta_vencimento'
+        'alerta_vencimento',
+        // PRD 02
+        'dy_medio_5a',
+        'rentab_nominal_1a', 'rentab_nominal_2a', 'rentab_nominal_5a',
+        'rentab_real_1a', 'rentab_real_2a', 'rentab_real_5a',
+        'dy_medio_5a_fonte', 'dy_medio_5a_atualizado_em'
       ];
       const missing = expected.filter(c => !cols.includes(c));
       if (missing.length) throw new Error(`faltando colunas no DB legacy: ${missing.join(',')}`);
 
       const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-      if (v.valor !== '1.2') throw new Error(`versao_schema deveria ser 1.2, está ${v.valor}`);
+      if (v.valor !== '1.3') throw new Error(`versao_schema deveria ser 1.3, está ${v.valor}`);
 
       const fk = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='fii_scraper_log'`).get();
       if (!fk) throw new Error('fii_scraper_log não foi criada no DB legacy');
@@ -369,10 +392,112 @@ function runMigrationTests() {
       // Segunda chamada: não pode quebrar, não pode duplicar coluna, não pode duplicar log.
       mod.runMigrations(db);
       const versao = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-      if (versao.valor !== '1.2') throw new Error(`versao_schema deveria ser 1.2, está ${versao.valor}`);
+      if (versao.valor !== '1.3') throw new Error(`versao_schema deveria ser 1.3, está ${versao.valor}`);
       const fkCount = db.prepare("SELECT COUNT(*) AS c FROM fii_scraper_log").get().c;
       if (fkCount !== 0) throw new Error(`fii_scraper_log não deveria ter linhas (count=${fkCount})`);
     });
+  });
+
+  describe('runMigrations aplica 1.3 em DB no estado 1.2 (PRD 02 — regression)', () => {
+    function db12() {
+      const db = new Database(':memory:');
+      db.pragma('foreign_keys = ON');
+      db.exec(`
+        CREATE TABLE ativos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ticker TEXT NOT NULL UNIQUE,
+          tipo TEXT NOT NULL DEFAULT 'FII',
+          dy_12m REAL, dy_24m REAL, ultimo_dividendo REAL, ultimo_pagto TEXT,
+          vencimento_medio_contratos DATE,
+          vencimento_medio_contratos_meses INTEGER,
+          tipo_reajuste TEXT,
+          reajuste_percentual REAL,
+          vencimento_medio_origem TEXT,
+          vencimento_medio_coletado_em TEXT,
+          alerta_vencimento INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE fii_scraper_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
+          campo TEXT NOT NULL, sucesso INTEGER NOT NULL,
+          ts TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (ticker) REFERENCES ativos(ticker)
+        );
+        CREATE TABLE config (chave TEXT PRIMARY KEY, valor TEXT);
+        CREATE TABLE schema_migrations (
+          version TEXT PRIMARY KEY, description TEXT NOT NULL,
+          applied_at TEXT DEFAULT (datetime('now')), duration_ms INTEGER,
+          rows_before INTEGER, rows_after INTEGER, reversible INTEGER DEFAULT 1
+        );
+        INSERT INTO schema_migrations (version, description)
+          VALUES ('1.2', 'PRD 12: vencimento médio de contratos');
+        INSERT INTO config (chave, valor) VALUES ('versao_schema', '1.2');
+        INSERT INTO config (chave, valor) VALUES ('vencimento_janela_alerta_meses', '24');
+      `);
+      return db;
+    }
+
+    it('migration 1.3 adiciona 9 colunas em ativos; dados existentes preservados; versao_schema = 1.3', () => {
+      const db = db12();
+      db.prepare(`INSERT INTO ativos (ticker, dy_12m, vencimento_medio_contratos, tipo_reajuste)
+                  VALUES ('HGLG11', 8.5, '2030-12-31', 'IGPM')`).run();
+
+      const mod = require(REPO_ROOT + '/src/server/db.js');
+      mod.runMigrations(db);
+
+      const cols = db.prepare('PRAGMA table_info(ativos)').all().map(c => c.name);
+      const expected = ['dy_medio_5a', 'rentab_nominal_1a', 'rentab_nominal_2a', 'rentab_nominal_5a',
+                        'rentab_real_1a', 'rentab_real_2a', 'rentab_real_5a',
+                        'dy_medio_5a_fonte', 'dy_medio_5a_atualizado_em'];
+      const missing = expected.filter(c => !cols.includes(c));
+      if (missing.length) throw new Error(`faltando colunas PRD 02: ${missing.join(',')}`);
+
+      const row = db.prepare("SELECT * FROM ativos WHERE ticker='HGLG11'").get();
+      if (row.dy_12m !== 8.5) throw new Error(`dy_12m deveria ser 8.5, está ${row.dy_12m}`);
+      if (row.vencimento_medio_contratos !== '2030-12-31') throw new Error(`vencimento deveria estar preservado, está ${row.vencimento_medio_contratos}`);
+      if (row.tipo_reajuste !== 'IGPM') throw new Error(`tipo_reajuste deveria estar preservado, está ${row.tipo_reajuste}`);
+      if (row.dy_medio_5a !== null) throw new Error(`dy_medio_5a deveria ser null, está ${row.dy_medio_5a}`);
+
+      const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
+      if (v.valor !== '1.3') throw new Error(`versao_schema deveria ser 1.3, está ${v.valor}`);
+
+      const log = db.prepare("SELECT * FROM schema_migrations WHERE version='1.3'").get();
+      if (!log) throw new Error('linha 1.3 ausente em schema_migrations');
+    });
+
+    it('migration 1.3 seed indicador_dy_vs_5a_abaixo_pct = 95', () => {
+      const db = db12();
+      const mod = require(REPO_ROOT + '/src/server/db.js');
+      mod.runMigrations(db);
+      const v = db.prepare("SELECT valor FROM config WHERE chave='indicador_dy_vs_5a_abaixo_pct'").get();
+      if (!v) throw new Error('seed não criado');
+      if (v.valor !== '95') throw new Error(`valor deveria ser 95, está ${v.valor}`);
+    });
+
+    it('migration 1.3 idempotente: runMigrations 2x mantém versao_schema=1.3 sem duplicar', () => {
+      const db = db12();
+      const mod = require(REPO_ROOT + '/src/server/db.js');
+      mod.runMigrations(db);
+      mod.runMigrations(db); // segunda vez
+      const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
+      if (v.valor !== '1.3') throw new Error(`versao_schema deveria ser 1.3, está ${v.valor}`);
+      const colCount = db.prepare("SELECT COUNT(*) AS c FROM pragma_table_info('ativos') WHERE name='dy_medio_5a'").get();
+      if (colCount.c !== 1) throw new Error(`dy_medio_5a duplicada (count=${colCount.c})`);
+      const logCount = db.prepare("SELECT COUNT(*) AS c FROM schema_migrations WHERE version='1.3'").get();
+      if (logCount.c !== 1) throw new Error(`schema_migrations 1.3 duplicada (count=${logCount.c})`);
+    });
+
+    it('integrity_check retorna ok após migration 1.3', () => {
+      const db = db12();
+      const mod = require(REPO_ROOT + '/src/server/db.js');
+      mod.runMigrations(db);
+      const r = db.prepare('PRAGMA integrity_check').get();
+      if (r.integrity_check !== 'ok') throw new Error(`integrity_check falhou: ${r.integrity_check}`);
+    });
+  });
+
+  describe('backupDb (PRD 12 — fix schema-reviewer #2)', () => {
 
     it('backupDb exportada e throws em DB corrompido (fix schema-reviewer #2)', () => {
       const mod = require(REPO_ROOT + '/src/server/db.js');
@@ -500,7 +625,7 @@ function runMigrationTests() {
         const ativos = db.prepare('SELECT COUNT(*) AS c FROM ativos').get().c;
         if (ativos !== 1) throw new Error(`FII legado deveria estar preservado, count=${ativos}`);
         const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-        if (v.valor !== '1.2') throw new Error(`versao_schema deveria ser 1.2, está ${v.valor}`);
+        if (v.valor !== '1.3') throw new Error(`versao_schema deveria ser 1.3, está ${v.valor}`);
         db.close();
       } finally {
         for (const f of fs.readdirSync(tmpDir)) {

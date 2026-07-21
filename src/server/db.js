@@ -89,10 +89,10 @@ async function initDb() {
   dbInstance.pragma('foreign_keys = ON');
 
   // Decide se o banco é legacy (pré-migration 1.2 ou parcialmente migrado).
-  // Lista as 7 colunas que a migration 1.2 adiciona; se QUALQUER delas
-  // estiver ausente, é tratado como legacy e NÃO rodamos init.sql inteiro
-  // (init.sql referencia colunas novas e quebraria). runMigrations então
-  // completa a migração idempotentemente.
+  // Lista as 7 colunas que a migration 1.2 adiciona + as 9 da migration 1.3;
+  // se QUALQUER delas estiver ausente, é tratado como legacy e NÃO rodamos
+  // init.sql inteiro (init.sql referencia colunas novas e quebraria).
+  // runMigrations então completa a migração idempotentemente.
   const PRD12_COLS = [
     'vencimento_medio_contratos',
     'vencimento_medio_contratos_meses',
@@ -102,6 +102,18 @@ async function initDb() {
     'vencimento_medio_coletado_em',
     'alerta_vencimento'
   ];
+  const PRD02_COLS = [
+    'dy_medio_5a',
+    'rentab_nominal_1a',
+    'rentab_nominal_2a',
+    'rentab_nominal_5a',
+    'rentab_real_1a',
+    'rentab_real_2a',
+    'rentab_real_5a',
+    'dy_medio_5a_fonte',
+    'dy_medio_5a_atualizado_em'
+  ];
+  const ALL_NEEDED_COLS = [...PRD12_COLS, ...PRD02_COLS];
   const hasAtivosTable = dbInstance
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ativos'")
     .get();
@@ -109,12 +121,12 @@ async function initDb() {
     ? dbInstance.prepare('PRAGMA table_info(ativos)').all().map(c => c.name)
     : [];
   const ativosCols = new Set(ativosColsList);
-  const colunasFaltando = PRD12_COLS.filter(c => !ativosCols.has(c));
+  const colunasFaltando = ALL_NEEDED_COLS.filter(c => !ativosCols.has(c));
   // É legacy APENAS se a tabela `ativos` existe mas está faltando colunas.
   // Se `ativos` não existe, é fresh install — não pula init.sql.
   const isLegacy = hasAtivosTable && colunasFaltando.length > 0;
   console.log('[db] isLegacy:', isLegacy,
-    'faltam', colunasFaltando.length, 'colunas PRD 12',
+    'faltam', colunasFaltando.length, 'colunas PRD 12/02',
     colunasFaltando.length ? '(' + colunasFaltando.join(',') + ')' : '');
 
   if (isLegacy) {
@@ -179,6 +191,16 @@ const FALLBACK_SCHEMA_INLINE = `
       CHECK (vencimento_medio_origem IS NULL OR vencimento_medio_origem IN ('main','comunicado','manual','fallback')),
     vencimento_medio_coletado_em TEXT,
     alerta_vencimento INTEGER DEFAULT 0 CHECK (alerta_vencimento IN (0,1)),
+    -- Migration 1.3: Indicadores históricos de DY e rentabilidade real (PRD 02)
+    dy_medio_5a REAL,
+    rentab_nominal_1a REAL,
+    rentab_nominal_2a REAL,
+    rentab_nominal_5a REAL,
+    rentab_real_1a REAL,
+    rentab_real_2a REAL,
+    rentab_real_5a REAL,
+    dy_medio_5a_fonte TEXT,
+    dy_medio_5a_atualizado_em TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS cotacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data TEXT NOT NULL, preco REAL NOT NULL, fonte TEXT DEFAULT 'manual', FOREIGN KEY (ativo_id) REFERENCES ativos(id));
@@ -203,6 +225,7 @@ const FALLBACK_SCHEMA_INLINE = `
   CREATE INDEX IF NOT EXISTS idx_scraper_log_ticker ON fii_scraper_log(ticker, ts);
   CREATE INDEX IF NOT EXISTS idx_ativos_alerta_venc ON ativos(alerta_vencimento) WHERE alerta_vencimento = 1;
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('vencimento_janela_alerta_meses', '24');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('indicador_dy_vs_5a_abaixo_pct', '95');
 `;
 
 /**
@@ -273,6 +296,35 @@ const MIGRATIONS = [
       // Seed config: janela de alerta. Idempotente.
       db.prepare(`
         INSERT OR IGNORE INTO config (chave, valor) VALUES ('vencimento_janela_alerta_meses', '24')
+      `).run();
+    }
+  },
+  {
+    version: '1.3',
+    description: 'PRD 02: indicadores históricos de DY (dy_medio_5a) + rentabilidades nominal/real 1a/2a/5a + fonte/atualizado_em',
+    up(db) {
+      // Adiciona 9 colunas nullable em ativos (idempotente via PRAGMA table_info).
+      const ativosCols = db.prepare('PRAGMA table_info(ativos)').all().map(c => c.name);
+      const adds = [
+        ['dy_medio_5a', 'REAL'],
+        ['rentab_nominal_1a', 'REAL'],
+        ['rentab_nominal_2a', 'REAL'],
+        ['rentab_nominal_5a', 'REAL'],
+        ['rentab_real_1a', 'REAL'],
+        ['rentab_real_2a', 'REAL'],
+        ['rentab_real_5a', 'REAL'],
+        ['dy_medio_5a_fonte', 'TEXT'],
+        ['dy_medio_5a_atualizado_em', 'TEXT']
+      ];
+      for (const [name, decl] of adds) {
+        if (!ativosCols.includes(name)) {
+          db.exec(`ALTER TABLE ativos ADD COLUMN ${name} ${decl}`);
+        }
+      }
+      // Seed config: threshold configurável de alerta DY vs 5a (PRD 02 RF-014).
+      // Idempotente via INSERT OR IGNORE.
+      db.prepare(`
+        INSERT OR IGNORE INTO config (chave, valor) VALUES ('indicador_dy_vs_5a_abaixo_pct', '95')
       `).run();
     }
   }

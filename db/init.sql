@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS ativos (
   vencimento_medio_origem TEXT CHECK (vencimento_medio_origem IS NULL OR vencimento_medio_origem IN ('main','comunicado','manual','fallback')),
   vencimento_medio_coletado_em TEXT,
   alerta_vencimento INTEGER DEFAULT 0 CHECK (alerta_vencimento IN (0,1)),
+  -- Migration 1.3: Indicadores históricos de DY e rentabilidade real (PRD 02)
+  dy_medio_5a REAL,                   -- DY médio 5 anos (pontos percentuais)
+  rentab_nominal_1a REAL,
+  rentab_nominal_2a REAL,
+  rentab_nominal_5a REAL,
+  rentab_real_1a REAL,
+  rentab_real_2a REAL,
+  rentab_real_5a REAL,
+  dy_medio_5a_fonte TEXT,             -- 'investidor10' | 'manual' | etc.
+  dy_medio_5a_atualizado_em TEXT,     -- ISO datetime
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -145,7 +155,7 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('dy_minimo_global', '8.0'),
   ('moeda', 'BRL'),
   -- Migration 1.2: schema versionada (atualizada no INSERT OR REPLACE abaixo)
-  ('versao_schema', '1.2'),
+  ('versao_schema', '1.3'),
   -- Thresholds de preço (em % do preço-teto)
   ('pct_muito_barato', '85.0'),   -- até 85% do preço-teto = muito barato
   ('pct_barato', '100.0'),         -- até 100% = no teto
@@ -157,4 +167,6 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   -- IR
   ('aliquota_ir_dividendos', '0.0'),  -- isento para FIIs pessoa física
   -- Migration 1.2: Vencimento de Contratos
-  ('vencimento_janela_alerta_meses', '24');
+  ('vencimento_janela_alerta_meses', '24'),
+  -- Migration 1.3: Indicadores históricos de DY e rentabilidade real (PRD 02)
+  ('indicador_dy_vs_5a_abaixo_pct', '95');

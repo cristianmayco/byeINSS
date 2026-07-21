@@ -275,6 +275,53 @@ async function extractFIIDetalhes(ticker) {
       const gestor = dados['gestor'] || dados['gestão'] || null;
       const segmento = dados['segmento'] || dados['tipo de fundo'] || null;
 
+      // PRD 02 — DY médio 5 anos (heurística multi-label)
+      const dyMedio5aRaw = get('dy médio 5 anos') || get('dy medio 5 anos') ||
+                            get('dividend yield 5 anos') || get('dy 5a') || get('dy 5 anos');
+      const dy_medio_5a = brpct(dyMedio5aRaw);
+
+      // PRD 02 — Rentabilidades nominal/real × 1a/2a/5a
+      // Estratégia: tabelas com cabeçalho contendo 'Rentabilidade' ou linhas com períodos.
+      // Aceita 3 formatos comuns do I10:
+      //   - Tabela com cabeçalhos: ['', '1 mês', '3 meses', '1 ano', '2 anos', '5 anos']
+      //     e duas linhas: Nominal e Real.
+      //   - Tabela com 6 linhas (Nominal/Real × 1a/2a/5a) e 2 colunas (R$/%).
+      //   - Lista de pares (label, valor) no DOM.
+      const rentab = { nominal_1a: null, nominal_2a: null, nominal_5a: null,
+                       real_1a: null, real_2a: null, real_5a: null };
+      const tabelas = [...document.querySelectorAll('table')];
+      for (const t of tabelas) {
+        const headerCells = [...t.querySelectorAll('thead th, thead td, tr:first-child th, tr:first-child td')];
+        const headerText = headerCells.map(c => c.textContent.trim().toLowerCase()).join('|');
+        if (!/rentab/.test(headerText) && !/nominal/.test(headerText)) continue;
+        const linhasT = [...t.querySelectorAll('tbody tr, tr')];
+        // Detecta mapeamento coluna → período
+        const colPeriodo = {};
+        for (let i = 0; i < headerCells.length; i++) {
+          const h = headerCells[i].textContent.trim().toLowerCase();
+          if (/^1\\s*a/.test(h) || /12 meses/.test(h)) colPeriodo[i] = '1a';
+          else if (/^2\\s*a/.test(h) || /24 meses/.test(h)) colPeriodo[i] = '2a';
+          else if (/^5\\s*a/.test(h) || /60 meses/.test(h)) colPeriodo[i] = '5a';
+        }
+        if (Object.keys(colPeriodo).length === 0) continue;
+        for (const row of linhasT) {
+          const cells = [...row.querySelectorAll('td, th')];
+          if (cells.length < 2) continue;
+          const labelRow = cells[0].textContent.trim().toLowerCase();
+          const isNominal = /nominal/.test(labelRow);
+          const isReal = /real/.test(labelRow);
+          if (!isNominal && !isReal) continue;
+          for (let i = 1; i < cells.length; i++) {
+            const p = colPeriodo[i];
+            if (!p) continue;
+            const v = brpct(cells[i].textContent.trim());
+            if (v === null) continue;
+            const key = (isNominal ? 'nominal' : 'real') + '_' + p;
+            if (rentab[key] === null) rentab[key] = v;
+          }
+        }
+      }
+
       // Último dividendo: procura por "Último Rendimento" ou "Último Dividendo"
       let ultimoDividendo = null, ultimoPagto = null;
       const divLabels = [...document.querySelectorAll('*')].filter(el => {
@@ -303,7 +350,15 @@ async function extractFIIDetalhes(ticker) {
         dy_12m: dy12m, dy_24m: dy24m,
         taxa_adm: taxaAdm,
         ultimo_dividendo: ultimoDividendo,
-        ultimo_pagto: ultimoPagto
+        ultimo_pagto: ultimoPagto,
+        // PRD 02 — Indicadores históricos
+        dy_medio_5a,
+        rentab_nominal_1a: rentab.nominal_1a,
+        rentab_nominal_2a: rentab.nominal_2a,
+        rentab_nominal_5a: rentab.nominal_5a,
+        rentab_real_1a: rentab.real_1a,
+        rentab_real_2a: rentab.real_2a,
+        rentab_real_5a: rentab.real_5a
       };
     })()
   `);
@@ -312,6 +367,7 @@ async function extractFIIDetalhes(ticker) {
 
 // Itera sobre todos os FIIs da carteira, visita cada um e extrai detalhes
 async function extractAllFIIDetalhes(db) {
+  const { mergeIndicadores } = require('../shared/indicadores.js');
   const fiiList = db.prepare("SELECT id, ticker FROM ativos WHERE tipo='FII' AND ativo=1").all();
   const resultados = [];
   for (const fii of fiiList) {
@@ -337,6 +393,37 @@ async function extractAllFIIDetalhes(db) {
         dados.taxa_adm, dados.ultimo_dividendo, dados.ultimo_pagto,
         fii.id
       );
+
+      // PRD 02 — Indicadores históricos (mergeIndicadores = persistência segura)
+      const prev = db.prepare(`SELECT dy_medio_5a, rentab_nominal_1a, rentab_nominal_2a,
+                                       rentab_nominal_5a, rentab_real_1a, rentab_real_2a,
+                                       rentab_real_5a, dy_medio_5a_fonte, dy_medio_5a_atualizado_em
+                                FROM ativos WHERE id = ?`).get(fii.id);
+      const novoIndicador = {
+        dy_medio_5a: dados.dy_medio_5a,
+        rentab_nominal_1a: dados.rentab_nominal_1a,
+        rentab_nominal_2a: dados.rentab_nominal_2a,
+        rentab_nominal_5a: dados.rentab_nominal_5a,
+        rentab_real_1a: dados.rentab_real_1a,
+        rentab_real_2a: dados.rentab_real_2a,
+        rentab_real_5a: dados.rentab_real_5a
+      };
+      const merged = mergeIndicadores(prev, novoIndicador);
+      db.prepare(`UPDATE ativos SET
+        dy_medio_5a = ?,
+        rentab_nominal_1a = ?, rentab_nominal_2a = ?, rentab_nominal_5a = ?,
+        rentab_real_1a = ?, rentab_real_2a = ?, rentab_real_5a = ?,
+        dy_medio_5a_fonte = COALESCE(?, dy_medio_5a_fonte),
+        dy_medio_5a_atualizado_em = COALESCE(?, dy_medio_5a_atualizado_em),
+        updated_at = datetime('now')
+        WHERE id = ?`).run(
+        merged.dy_medio_5a,
+        merged.rentab_nominal_1a, merged.rentab_nominal_2a, merged.rentab_nominal_5a,
+        merged.rentab_real_1a, merged.rentab_real_2a, merged.rentab_real_5a,
+        merged.dy_medio_5a_fonte, merged.dy_medio_5a_atualizado_em,
+        fii.id
+      );
+
       resultados.push({ ticker: fii.ticker, ok: true, dados });
     } catch (e) {
       resultados.push({ ticker: fii.ticker, ok: false, erro: e.message });
