@@ -13,6 +13,14 @@ const __dirname = path.dirname(__filename);
 
 const INIT_SQL_PATH = path.join(__dirname, '..', '..', 'db', 'init.sql');
 
+// Carrega o db.js via dynamic import. Usamos uma string para evitar que
+// Vite tente analisar rotas Express/etc no topo do bundle. O módulo
+// db.js depende de `app` do Electron só em initDb; runMigrations é puro.
+async function loadRunMigrations() {
+  const mod = await import('../server/db.js');
+  return mod.runMigrations;
+}
+
 function freshDb() {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
@@ -227,5 +235,113 @@ describe('migration 1.4 — PRD 03: AMORTIZACAO em proventos', () => {
     const reg = db.prepare("SELECT * FROM schema_migrations WHERE version='1.4'").get();
     expect(reg).toBeDefined();
     expect(reg.description).toMatch(/AMORTIZACAO/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// COBERTURA DO CAMINHO REAL — runMigrations(db) (PRD 03 fix do bug
+// CRÍTICO 1 reportado pelo schema-reviewer). Estes testes NÃO usam
+// applyMigration1_4: rodam o wrapper runMigrations() exatamente como
+// initDb() faz em produção.
+// ═══════════════════════════════════════════════════════════════════════
+describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
+  it('CRÍTICO 1: runMigrations em DB 1.3 com proventos legados NÃO quebra (nested tx resolvida)', async () => {
+    const db = freshDb();
+    db.exec(`
+      CREATE TABLE ativos (id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL UNIQUE);
+      CREATE TABLE proventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL,
+        data_com TEXT, data_pagto TEXT NOT NULL, valor_por_cota REAL NOT NULL,
+        tipo TEXT DEFAULT 'DIVIDENDO',
+        FOREIGN KEY (ativo_id) REFERENCES ativos(id));
+      CREATE TABLE config (chave TEXT PRIMARY KEY, valor TEXT);
+      CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now')), duration_ms INTEGER,
+        rows_before INTEGER, rows_after INTEGER, reversible INTEGER NOT NULL DEFAULT 1);
+      INSERT INTO ativos (ticker) VALUES ('HGLG11'), ('XPML11');
+      INSERT INTO proventos (ativo_id, data_pagto, valor_por_cota, tipo) VALUES
+        (1, '2025-07-15', 0.80, 'DIVIDENDO'),
+        (1, '2025-08-15', 0.85, NULL),  -- será normalizado para DIVIDENDO
+        (2, '2025-08-15', 0.95, 'RENDIMENTO');
+      INSERT INTO schema_migrations (version, description) VALUES
+        ('1.2', 'PRD 12'), ('1.3', 'PRD 02');
+      INSERT INTO config (chave, valor) VALUES ('versao_schema', '1.3');
+    `);
+
+    const runMigrations = await loadRunMigrations();
+    expect(() => runMigrations(db)).not.toThrow();
+
+    // Bump de versão
+    const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
+    expect(v.valor).toBe('1.4');
+
+    // Schema_migrations recebeu 1.4
+    const reg = db.prepare("SELECT version FROM schema_migrations WHERE version='1.4'").get();
+    expect(reg).toBeDefined();
+
+    // Dados preservados: 3 proventos mantidos, NULL virou 'DIVIDENDO'
+    const rows = db.prepare("SELECT id, tipo, valor_por_cota FROM proventos ORDER BY id").all();
+    expect(rows.length).toBe(3);
+    expect(rows[1].tipo).toBe('DIVIDENDO');  // NULL → DIVIDENDO
+    expect(rows[2].tipo).toBe('RENDIMENTO');
+
+    // CHECK aceita AMORTIZACAO
+    expect(() =>
+      db.prepare(`INSERT INTO proventos (ativo_id, data_pagto, valor_por_cota, tipo) VALUES (1, '2026-09-20', 0.20, 'AMORTIZACAO')`).run()
+    ).not.toThrow();
+
+    // CHECK rejeita tipo desconhecido
+    expect(() =>
+      db.prepare(`INSERT INTO proventos (ativo_id, data_pagto, valor_por_cota, tipo) VALUES (1, '2026-09-20', 0.20, 'JCP')`).run()
+    ).toThrow();
+  });
+
+  it('runMigrations idempotente: chamar 2x mantém versao_schema=1.4 sem duplicar índices', async () => {
+    const db = freshDb();
+    db.exec(`
+      CREATE TABLE ativos (id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL UNIQUE);
+      CREATE TABLE proventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL,
+        data_com TEXT, data_pagto TEXT NOT NULL, valor_por_cota REAL NOT NULL, tipo TEXT DEFAULT 'DIVIDENDO',
+        FOREIGN KEY (ativo_id) REFERENCES ativos(id));
+      CREATE TABLE config (chave TEXT PRIMARY KEY, valor TEXT);
+      CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now')), duration_ms INTEGER,
+        rows_before INTEGER, rows_after INTEGER, reversible INTEGER NOT NULL DEFAULT 1);
+      INSERT INTO ativos (ticker) VALUES ('HGLG11');
+      INSERT INTO proventos (ativo_id, data_pagto, valor_por_cota, tipo) VALUES (1, '2025-08-15', 0.85, 'DIVIDENDO');
+      INSERT INTO config (chave, valor) VALUES ('versao_schema', '1.3');
+      INSERT INTO schema_migrations (version, description) VALUES ('1.3', 'PRD 02');
+      INSERT INTO schema_migrations (version, description) VALUES ('1.2', 'PRD 12');
+    `);
+
+    const runMigrations = await loadRunMigrations();
+    runMigrations(db);
+    runMigrations(db);  // 2x: deve ser no-op
+
+    const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
+    expect(v.valor).toBe('1.4');
+    // Índice criado exatamente 1x
+    const idxCount = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='index' AND name='idx_proventos_tipo_data'").get();
+    expect(idxCount.c).toBe(1);
+    // Schema_migrations tem 1.4 registrado exatamente 1x
+    const m14 = db.prepare("SELECT COUNT(*) AS c FROM schema_migrations WHERE version='1.4'").get();
+    expect(m14.c).toBe(1);
+  });
+
+  it('ALTO 3: runMigrations em DB 1.3 sem proventos (banco novo) é no-op silencioso', async () => {
+    const db = freshDb();
+    db.exec(`
+      CREATE TABLE ativos (id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL UNIQUE);
+      CREATE TABLE config (chave TEXT PRIMARY KEY, valor TEXT);
+      CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now')), duration_ms INTEGER,
+        rows_before INTEGER, rows_after INTEGER, reversible INTEGER NOT NULL DEFAULT 1);
+      INSERT INTO config (chave, valor) VALUES ('versao_schema', '1.3');
+      INSERT INTO schema_migrations (version, description) VALUES ('1.3', 'PRD 02');
+    `);
+
+    const runMigrations = await loadRunMigrations();
+    expect(() => runMigrations(db)).not.toThrow();
+    const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
+    expect(v.valor).toBe('1.4');
   });
 });

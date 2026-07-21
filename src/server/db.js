@@ -382,25 +382,33 @@ const MIGRATIONS = [
       ).get();
       if (tableSql && /CHECK\s*\(\s*tipo\s*IN/.test(tableSql.sql) &&
           /AMORTIZACAO/.test(tableSql.sql)) {
-        // Já migrado — só garantir índices.
+        // Já migrado — só garantir índices (idempotência).
         db.exec(`
           CREATE INDEX IF NOT EXISTS idx_proventos_ativo_data
             ON proventos(ativo_id, data_pagto DESC);
           CREATE INDEX IF NOT EXISTS idx_proventos_tipo_data
             ON proventos(tipo, data_pagto DESC);
-          INSERT OR IGNORE INTO config (chave, valor) VALUES ('versao_schema', '1.4');
         `);
         return;
       }
       // 4. Recriar tabela com CHECK (PRD 03 Passos 4-7).
+      //
+      // IMPORTANTE: `runMigrations` envolve `up(db)` em `db.transaction()`.
+      // Portanto NÃO podemos usar BEGIN/COMMIT aqui dentro (SQLite recusa
+      // "cannot start a transaction within a transaction"). Confiamos na
+      // transação wrapper para atomicidade. As validações count + sums +
+      // FK + integrity pós-execução são o fallback em caso de exceptions
+      // (a wrapper faz ROLLBACK automaticamente se qualquer throw acontecer).
+      //
+      // Como `proventos` só tem FK de saída (→ ativos) e a tabela destino
+      // é recriada com a mesma FK para o mesmo id, o `DROP TABLE` original
+      // não viola `PRAGMA foreign_keys` mesmo com FK=ON.
       const rowsBefore = db.prepare('SELECT COUNT(*) AS c FROM proventos').get().c;
       const idsBefore = db.prepare('SELECT COALESCE(SUM(id), 0) AS s FROM proventos').get().s;
       const ativosBefore = db.prepare('SELECT COALESCE(SUM(ativo_id), 0) AS s FROM proventos').get().s;
       const valoresBefore = db.prepare('SELECT COALESCE(SUM(valor_por_cota), 0) AS s FROM proventos').get().s;
 
       db.exec(`
-        PRAGMA foreign_keys = OFF;
-        BEGIN IMMEDIATE;
         DROP TABLE IF EXISTS proventos_v2;
         CREATE TABLE proventos_v2 (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -420,8 +428,6 @@ const MIGRATIONS = [
         ALTER TABLE proventos_v2 RENAME TO proventos;
         CREATE INDEX idx_proventos_ativo_data ON proventos(ativo_id, data_pagto DESC);
         CREATE INDEX idx_proventos_tipo_data ON proventos(tipo, data_pagto DESC);
-        COMMIT;
-        PRAGMA foreign_keys = ON;
       `);
 
       // 5. Validações pós-migração (PRD 03 Passo 6 + 9).
@@ -448,10 +454,10 @@ const MIGRATIONS = [
       if (integrity.integrity_check !== 'ok') {
         throw new Error(`[migration 1.4] integrity_check falhou: ${integrity.integrity_check}`);
       }
-      // 6. Bump versão (runMigrations também faz — aqui é só idempotência extra).
-      db.prepare(`
-        INSERT OR REPLACE INTO config (chave, valor) VALUES ('versao_schema', '1.4')
-      `).run();
+      // 6. Bump versão é responsabilidade do wrapper runMigrations.
+      // Não duplicamos aqui dentro da transaction porque o wrapper
+      // já faz `INSERT OR REPLACE INTO config (versao_schema)` em
+      // sequência atômica.
     }
   }
 ];

@@ -160,4 +160,18 @@ describe('renderLinhasBatch — RF-010 modal em lote com parcelas', () => {
     const html = renderLinhasBatch([]);
     expect(html).toMatch(/Nenhuma parcela/);
   });
+
+  it('SECURITY: escapar ticker e parcela_id contra XSS injection', () => {
+    const evil = '" onerror=alert(1) data-x="';
+    const linhas = [
+      { parcela_id: `p${evil}`, ticker: `EVIL<script>alert('x')</script>`, tipo: 'DIVIDENDO', valor_por_cota: 0.5 }
+    ];
+    const html = renderLinhasBatch(linhas);
+    // O ticker malicioso não pode vazar como atributo nem como conteúdo aberto de tag
+    expect(html).not.toMatch(/<script>alert\('x'\)<\/script>/);
+    // Aspas no parcela_id devem estar escapadas
+    expect(html).toMatch(/data-parcela-id="p&quot; onerror=alert\(1\) data-x=&quot;/);
+    // O ticker aparece no strong, mas escapado
+    expect(html).toContain('EVIL&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;');
+  });
 });

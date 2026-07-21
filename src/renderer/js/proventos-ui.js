@@ -109,15 +109,19 @@
     };
   }
 
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
   function renderLinhasBatch(linhas) {
     if (!linhas || linhas.length === 0) {
       return '<tr class="linhas-vazia"><td colspan="4" class="muted">Nenhuma parcela. Use "Adicionar parcela" para começar.</td></tr>';
     }
     return linhas.map((l) => `
-      <tr data-parcela-id="${l.parcela_id}">
-        <td><strong>${l.ticker}</strong></td>
+      <tr data-parcela-id="${escapeHtml(l.parcela_id)}">
+        <td><strong>${escapeHtml(l.ticker)}</strong></td>
         <td>
-          <select data-campo="tipo" data-parcela="${l.parcela_id}"
+          <select data-campo="tipo" data-parcela="${escapeHtml(l.parcela_id)}"
             style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:4px;border-radius:4px;font-size:12px;">
             ${['DIVIDENDO','RENDIMENTO','AMORTIZACAO','BONIFICACAO'].map(t =>
               `<option value="${t}" ${l.tipo === t ? 'selected' : ''}>${labelTipo(t)}</option>`
@@ -125,12 +129,12 @@
           </select>
         </td>
         <td>
-          <input data-campo="valor" data-parcela="${l.parcela_id}"
-            type="number" step="0.0001" value="${l.valor_por_cota}"
+          <input data-campo="valor" data-parcela="${escapeHtml(l.parcela_id)}"
+            type="number" step="0.0001" value="${Number(l.valor_por_cota || 0)}"
             style="width:100%;padding:4px 8px;background:#0f172a;border:1px solid #334155;color:#e2e8f0;border-radius:4px;font-size:12px;">
         </td>
         <td>
-          <button type="button" data-campo="remover" data-parcela="${l.parcela_id}"
+          <button type="button" data-campo="remover" data-parcela="${escapeHtml(l.parcela_id)}"
             style="background:transparent;border:1px solid #ef4444;color:#fca5a5;border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer;">
             Remover
           </button>
@@ -145,7 +149,7 @@
     filtrarPorTipos, labelTipo, corTipo, badgeTipo,
     emptyStateProventos, renderFiltroTipos, lerTiposDoHash,
     serializarTiposParaHash, buildChartStackedDataset,
-    renderLinhasBatch, TIPOS_VALIDOS_LIST
+    renderLinhasBatch, escapeHtml, TIPOS_VALIDOS_LIST
   };
 
   // Expor globalmente no renderer para uso via <script> regular.

@@ -633,20 +633,27 @@ async function renderProventos(el, params) {
   const fimFiltro = (params && params.fim) || '';
 
   // 2) Carregar dados em paralelo.
-  const urlProvs = `/api/proventos${temFiltro ? tiposParamQS : ''}`;
-  const urlMensal = `/api/dashboard/proventos-mensais${tiposParamQS}${inicioFiltro ? (temFiltro ? '&' : '?') + 'inicio=' + inicioFiltro : ''}${fimFiltro ? (inicioFiltro || tiposParamQS ? '&' : '?') + 'fim=' + fimFiltro : ''}`;
-  const [proventos, ativos, projecao, serieMensal] = await Promise.all([
+  // 2) Carregar dados em paralelo.
+  const provsParams = new URLSearchParams();
+  if (temFiltro) {
+    for (const t of tiposAtivos) provsParams.append('tipos', t);
+  }
+  if (inicioFiltro) provsParams.set('inicio', inicioFiltro);
+  if (fimFiltro) provsParams.set('fim', fimFiltro);
+  const provsQS = provsParams.toString();
+  const urlProvs = `/api/proventos${provsQS ? '?' + provsQS : ''}`;
+  const urlMensal = `/api/dashboard/proventos-mensais${provsQS ? '?' + provsQS : ''}`;
+  const [proventos, ativos, projecao, serieMensal, resumo] = await Promise.all([
     api(urlProvs),
     api('/api/ativos'),
     api('/api/dashboard/projecao-proventos'),
-    api(urlMensal)
+    api(urlMensal),
+    api('/api/dashboard/resumo').catch(() => null)
   ]);
 
   // 3) KPIs (RF-016): distribuíveis 12M, amortizações 12M, projeção 12M.
-  // `proventos` já veio filtrado pelo backend. Calcula totais via API.
-  const kpiResp = await api('/api/dashboard/resumo').catch(() => null);
-  const distribuiveis12m = kpiResp ? Number(kpiResp.proventos_12m || 0) : 0;
-  const amortizacoes12m = kpiResp ? Number(kpiResp.amortizacoes_12m || 0) : 0;
+  const distribuiveis12m = Number(resumo?.proventos_12m || 0);
+  const amortizacoes12m = Number(resumo?.amortizacoes_12m || 0);
   const projecaoDistribuivel12m = Number(projecao.total_distribuivel_anual || 0);
 
   // 4) Render.
@@ -856,7 +863,7 @@ window.openProvBatchModal = function() {
             <div>
               <select id="batch-ticker-novo"
                 style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 10px;border-radius:6px;font-size:12px;">
-                ${ativos.map(a => `<option value="${a.ticker}">${a.ticker}</option>`).join('')}
+                ${ativos.map(a => `<option value="${escapeHtml(a.ticker)}">${escapeHtml(a.ticker)}</option>`).join('')}
               </select>
               <button type="button" class="btn btn-secondary" id="batch-add"
                 style="margin-left:6px;padding:6px 12px;">+ Adicionar parcela</button>
