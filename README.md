@@ -13,7 +13,7 @@ Sistema desktop (Electron) para acompanhar investimentos, simular FIRE (independ
 | **Dashboard** | Patrimônio, % por classe, % por ativo vs ideal, DY mensal, projeção 12M |
 | **Posições** | Lista editável (ticker, qtd, PM, atual, saldo, variação, DY, YoC, %cart, %ideal, **P/VP, vacância**) |
 | **Lançamentos** | Cadastro de compras/vendas (gera posição média automaticamente) |
-| **Proventos** | Dividendos por mês/ativo, total 12M, gráfico de renda passiva, **atualização em lote** |
+| **Proventos** | Dividendos vs amortizações separados por tipo (RF-016), KPIs `Distribuíveis 12M` / `Amortizações 12M` / `Projeção distribuível 12M`, gráfico mensal empilhado com 4 séries (DIVIDENDO/RENDIMENTO/AMORTIZACAO/BONIFICACAO), filtro por tipo via hash (`?tipos=DIVIDENDO,AMORTIZACAO`), quantidade elegível por linha, modal em lote com múltiplas parcelas (DIVIDENDO + AMORTIZACAO na mesma data) |
 | **Preço-teto** | Sinais: muito barato / no teto / caro. **Thresholds configuráveis** em % do preço-teto |
 | **Simulador** | Juros compostos: aporte inicial + mensal + meses + taxa + **reajuste anual** → projeção |
 | **FIRE** | Patrimônio necessário para renda desejada (taxa de retirada) |
@@ -22,6 +22,7 @@ Sistema desktop (Electron) para acompanhar investimentos, simular FIRE (independ
 | **Importar** | Login embutido no I10 (browser isolado) + **enriquecer com P/VP/vacância** + **agenda de dividendos** |
 | **Vencimento de contratos** *(PRD 12, schema 1.2)* | Vencimento médio de contratos + tipo de reajuste (IGPM/IPCA/FIXO/MISTO/OUTRO) por FII. **Detalhe por FII** em `#fii/:ticker` com card "Contratos & Reajuste" + modal acessível de edição manual (`PUT /api/fiis/contratos/:ticker`), e **bloco de alerta no Dashboard** quando vencimento < janela (default 24m, ajustável em Configurações). Scraper I10 incluso com `POST /api/fiis/scraper/contratos/resync` |
 | **Indicadores históricos FII** *(PRD 02, schema 1.3)* | DY médio 5 anos + rentabilidades nominal/real 1a/2a/5a por FII. Duas colunas novas em **Posições**: **DY vs 5y** (badge verde/amarelo/vermelho/cinza conforme desvio da média) e **Rent. real 12M**. **Bloco de alerta no Dashboard** quando DY 12M < média histórica de 5 anos. Endpoints `GET /api/fiis/indicadores` e `GET /api/fiis/indicadores/:ticker`; `POST /api/fiis/scraper/indicadores/resync` dispara enriquecimento em lote (com filtro opcional por tickers, falha de um não derruba o batch). Threshold `indicador_dy_vs_5a_abaixo_pct=95` configurável |
+| **Amortizações separadas** *(PRD 03, schema 1.4)* | Distingue `AMORTIZACAO` de `DIVIDENDO`/`RENDIMENTO` no ciclo completo. Scraper I10 captura a coluna `Tipo` da agenda (sem depender de posição), parser puro localizado por HEADER (semântica, tolera colunas invertidas). DY distribuível, projeção anual e alertas do Dashboard agora **só** consideram distribuíveis — amortizações aparecem em campo separado e em KPIs próprios (RF-019/020). Atualização em lote permite múltiplas parcelas por FII (dividendo + amortização na mesma data) com tipo explícito por linha |
 
 ---
 
@@ -145,6 +146,7 @@ Após popular o banco, o app calcula em tempo real:
 - **Alertas de concentração** (ativos muito acima do % ideal)
 - **Vencimento de contratos** (PRD 12): alerta de FIIs de Tijolo com vencimento médio < janela configurável (default 24m, ajustável em Configurações). O Dashboard exibe o card com a lista; em **Posições**, o ticker do FII virou link para `#fii/:ticker`, abrindo o detalhe com data, meses até vencer, tipo de reajuste e modal de edição manual. Endpoint `/api/dashboard/alertas-vencimento` lista os FIIs com pressão de renegociação se aproximando.
 - **Indicadores históricos FII** (PRD 02): duas colunas extras em **Posições** — **DY vs 5y** (badge verde/amarelo/vermelho conforme desvio do DY 12M em relação à média de 5 anos) e **Rent. real 12M**. O **Dashboard** mostra um bloco de alerta quando FIIs da carteira estão pagando DY 12M abaixo da média histórica de 5 anos (threshold `indicador_dy_vs_5a_abaixo_pct=95` configurável). Endpoints `GET /api/fiis/indicadores` e `GET /api/fiis/indicadores/:ticker`; `POST /api/fiis/scraper/indicadores/resync` para re-scraping em lote.
+- **Amortizações separadas** (PRD 03, schema 1.4): tabela `proventos` aceita 4 tipos com `CHECK` constraint. Parser puro da agenda localizado por HEADER (semântica), reconcialiação opcional de legados. Tela de Proventos com KPIs `Distribuíveis 12M` / `Amortizações 12M` / `Projeção distribuível 12M` separados, gráfico mensal empilhado por tipo (4 séries), filtro por tipo via hash (`?tipos=AMORTIZACAO`), tabela de amortizações previstas vs projeção recorrente. Endpoints `GET/POST /api/proventos`, `GET /api/dashboard/proventos-mensais`, `GET /api/dashboard/projecao-proventos`.
 
 > Os dados ficam 100% locais no seu SQLite — nada é enviado para lugar nenhum.
 
