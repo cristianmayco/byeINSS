@@ -31,6 +31,13 @@
       return { page: raw, nav: raw, params: {} };
     }
 
+    // PRD 02 sub-PR 4 (RF-019/RF-022): #posicoes?filtro=ATENCAO,CRITICO
+    // é uma rota estática com query string, não um caminho dinâmico.
+    // O split('/') abaixo jogaria para o dashboard incorretamente.
+    if (raw === 'posicoes' || raw.startsWith('posicoes?')) {
+      return { page: 'posicoes', nav: 'posicoes', params: {} };
+    }
+
     const parts = raw.split('/');
     if (parts.length !== 2 || parts[0] !== 'fii') {
       return dashboardRoute();

@@ -165,7 +165,14 @@
     table.setAttribute('aria-label', 'Matriz de rentabilidade Nominal vs Real para 1, 2 e 5 anos');
 
     const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th></th><th>1 ano</th><th>2 anos</th><th>5 anos</th></tr>';
+    const trHead = document.createElement('tr');
+    trHead.appendChild(document.createElement('th')); // canto vazio
+    for (const label of ['1 ano', '2 anos', '5 anos']) {
+      const th = document.createElement('th');
+      th.textContent = label;
+      trHead.appendChild(th);
+    }
+    thead.appendChild(trHead);
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
@@ -236,7 +243,13 @@
     if (!hash || typeof hash !== 'string') return null;
     const match = String(hash).match(/[?&]filtro=([^&]+)/);
     if (!match) return null;
-    const valores = decodeURIComponent(match[1])
+    let raw;
+    try {
+      raw = decodeURIComponent(match[1]);
+    } catch {
+      return null; // URI malformada — descarta silenciosamente
+    }
+    const valores = raw
       .split(',')
       .map(s => s.trim().toUpperCase())
       .filter(v => CLASSIFICACOES_VALIDAS.includes(v))

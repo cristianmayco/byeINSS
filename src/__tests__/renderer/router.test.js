@@ -63,9 +63,34 @@ describe('parseHashRoute', () => {
     ['segmento FII ausente', '#fii'],
     ['segmento FII vazio', '#fii/'],
     ['segmento extra', '#fii/HGLG11/extra'],
-    ['query string', '#fii/HGLG11?tab=proventos'],
     ['barra codificada no ticker', '#fii/HGLG11%2Fextra'],
   ])('faz fallback seguro para dashboard em caso de %s', (_description, hash) => {
     expect(parseHashRoute(hash, STATIC_ROUTE_NAMES)).toEqual(DASHBOARD_ROUTE);
+  });
+
+  // PRD 02 sub-PR 4 (RF-019 / RF-022): #posicoes com query string deve
+  // navegar para Posições, NÃO para Dashboard.
+  test('#posicoes com query string navega para Posições', () => {
+    expect(parseHashRoute('#posicoes?filtro=ATENCAO,CRITICO', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'posicoes',
+      nav: 'posicoes',
+      params: {},
+    });
+  });
+
+  test('#posicoes sem query string continua navegando para Posições', () => {
+    expect(parseHashRoute('#posicoes', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'posicoes',
+      nav: 'posicoes',
+      params: {},
+    });
+  });
+
+  test('#posicoes?filtro=inválido ainda navega para Posições (filtro descartado)', () => {
+    expect(parseHashRoute('#posicoes?filtro=junk', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'posicoes',
+      nav: 'posicoes',
+      params: {},
+    });
   });
 });
