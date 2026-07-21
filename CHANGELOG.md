@@ -5,6 +5,69 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+### Added — PRD 03: Amortizações Separadas em Proventos de FIIs (schema 1.4)
+
+- **Schema 1.4 — migration versionada**: tabela `proventos` agora aceita o
+  tipo `AMORTIZACAO` via `CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO'))`.
+  Recriação via `proventos_v2` (SQLite não tem `ALTER ADD CHECK`).
+  Backup automático via `VACUUM INTO` antes do DDL; validações
+  obrigatórias (count + sums + FK + integrity_check). Idempotente.
+- **Parser puro (`src/shared/agenda-parser.js`)** — localiza colunas
+  por HEADER (semântica), tolera ordem variável de colunas no I10,
+  normaliza `Dividendos`→`DIVIDENDO`, `Amortização`→`AMORTIZACAO`,
+  etc. Tipo desconhecido retorna `null` (RF-006: nunca assume
+  `DIVIDENDO` silenciosamente).
+- **Scraper I10 (`src/main/scraper.js`)** — `extractAgendaDividendos`
+  usa o parser inline, retorna resumo com contagens por tipo,
+  `total_lidos`, `total_inseridos`, `duplicados`, `reclassificados`,
+  `ignorados`, `erros` e `tipo_desconhecidos`. Falha controlada se
+  o I10 remover a coluna "Tipo" (RF-004 / PRD caso 5).
+- **Serviço de import (`src/shared/proventos-import.js`)** —
+  deduplicação por chave lógica completa (`ativo_id`, `data_pagto`,
+  `valor_por_cota`, `tipo`, `data_com`); permite que DIVIDENDO +
+  AMORTIZACAO coexistam na mesma data. Reconciliação opcional de
+  legados `DIVIDENDO` → `AMORTIZACAO` quando há candidato único.
+- **Endpoints (`src/server/routes/proventos.js`,
+  `src/server/routes/dashboard.js`)**:
+  - `GET /api/proventos?tipos=…&inicio=&fim=` retorna
+    `quantidade_elegivel` e `valor_total` por linha (RF-015).
+  - `POST /api/proventos` valida tipo (422), data ISO (400),
+    valor > 0, dedup (409).
+  - `POST /api/proventos/batch` aceita `proventos[{ticker,
+    valor_por_cota, tipo}]` (novo) ou `dividendos[]` (alias legado
+    assume `DIVIDENDO`).
+  - `GET /api/dashboard/proventos-mensais?tipos=&inicio=&fim=` agrega
+    por mês com `distribuiveis` (DIV+REND), `amortizacoes`,
+    `bonificacoes` e `total_caixa`. Bonificação NÃO compõe caixa
+    (RF-016).
+  - `GET /api/dashboard/projecao-proventos` retorna
+    `total_distribuivel_mensal/anual`, `dy_carteira_distribuivel`,
+    `detalhes[]` com `sem_base_recorrente`/`desatualizado`, e
+    `amortizacoes_previstas` (sem multiplicar por 12).
+  - `GET /api/dashboard/resumo` — campos `proventos_12m` e
+    `dy_carteira_12m` agora passam a ser **somente distribuíveis**
+    (RF-020). Novos: `amortizacoes_12m`,
+    `fluxo_caixa_proventos_12m`, `amortizacoes_total`.
+- **UI (`src/renderer/js/proventos-ui.js` + `pages.js`)** —
+  KPIs re-organizados em 3 colunas (Distribuíveis 12M /
+  Amortizações 12M / Projeção distribuível 12M); gráfico Chart.js
+  **empilhado** por tipo; tabela histórica com `quantidade_elegivel`,
+  `valor_total` e badge de tipo com `role=status`; bloco separado
+  de amortizações previstas; tabela textual paralela para leitores
+  de tela (a11y WCAG AA); `prefers-reduced-motion` desabilita
+  animação; modal em lote permite **adicionar parcelas** para o mesmo
+  FII (DIVIDENDO + AMORTIZACAO na mesma data — RF-010). Filtros
+  `?tipos=` refletidos no hash da URL (RF-013).
+- **Testes** — 71 novos testes:
+  - 12 testes da migration 1.4 (db-migration-1.4.test.js)
+  - 13 testes do parser da agenda (agenda-parser.test.js)
+  - 9 testes do import service (proventos-import.test.js)
+  - 14 testes dos helpers puros (proventos-helpers.test.js)
+  - 17 testes de integração HTTP (api-proventos-amortizacao.test.js)
+  - 21 testes dos helpers de UI (proventos-ui.test.js)
+  - 2 testes atualizados em api-dashboard.test.js para o novo
+    contrato.
+
 ### Added — PRD 02: Indicadores Históricos de DY e Rentabilidade Real (schema 1.3)
 
 - **Schema 1.3 — migration versionada**: 9 colunas nullable em `ativos`

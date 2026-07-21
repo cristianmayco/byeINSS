@@ -205,7 +205,8 @@ const FALLBACK_SCHEMA_INLINE = `
     updated_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS cotacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data TEXT NOT NULL, preco REAL NOT NULL, fonte TEXT DEFAULT 'manual', FOREIGN KEY (ativo_id) REFERENCES ativos(id));
   CREATE TABLE IF NOT EXISTS lancamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data TEXT NOT NULL, tipo TEXT NOT NULL CHECK(tipo IN ('COMPRA','VENDA')), quantidade INTEGER NOT NULL, preco REAL NOT NULL, corretora TEXT, taxa REAL DEFAULT 0, observacao TEXT, created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (ativo_id) REFERENCES ativos(id));
-  CREATE TABLE IF NOT EXISTS proventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data_com TEXT, data_pagto TEXT NOT NULL, valor_por_cota REAL NOT NULL, tipo TEXT DEFAULT 'DIVIDENDO', FOREIGN KEY (ativo_id) REFERENCES ativos(id));
+  CREATE TABLE IF NOT EXISTS proventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data_com TEXT, data_pagto TEXT NOT NULL, valor_por_cota REAL NOT NULL, tipo TEXT NOT NULL DEFAULT 'DIVIDENDO' CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')), FOREIGN KEY (ativo_id) REFERENCES ativos(id));
+  CREATE INDEX IF NOT EXISTS idx_proventos_tipo_data ON proventos(tipo, data_pagto DESC);
   CREATE TABLE IF NOT EXISTS metas (id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT NOT NULL, descricao TEXT, valor_alvo REAL NOT NULL, prazo_meses INTEGER, aporte_mensal REAL, taxa_anual REAL DEFAULT 12.0, patrimonio_atual REAL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS cenarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, descricao TEXT, tipo TEXT DEFAULT 'PATRIMONIO', valor_alvo REAL NOT NULL, prazo_meses INTEGER NOT NULL, aporte_inicial REAL DEFAULT 0, aporte_mensal REAL NOT NULL, taxa_anual REAL DEFAULT 12.0, reajuste_aporte_anual REAL DEFAULT 0, cor TEXT DEFAULT '#4ade80', ativo INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT);
@@ -326,6 +327,137 @@ const MIGRATIONS = [
       db.prepare(`
         INSERT OR IGNORE INTO config (chave, valor) VALUES ('indicador_dy_vs_5a_abaixo_pct', '95')
       `).run();
+    }
+  },
+  {
+    // PRD 03: amortizações separadas em proventos de FIIs.
+    // Adiciona tipo AMORTIZACAO + CHECK constraint em proventos.
+    // Recria tabela (SQLite não suporta ALTER ADD CHECK).
+    version: '1.4',
+    description: 'PRD 03: tipo AMORTIZACAO em proventos + CHECK constraint + idx_proventos_tipo_data',
+    up(db) {
+      // 1. Defesa em profundidade: garantir framework schema_migrations presente.
+      const hasSchema = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
+        .get();
+      if (!hasSchema) {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+            duration_ms INTEGER,
+            rows_before INTEGER,
+            rows_after INTEGER,
+            reversible INTEGER NOT NULL DEFAULT 1
+          );
+          CREATE INDEX IF NOT EXISTS idx_schema_migrations_applied
+            ON schema_migrations(applied_at DESC);
+        `);
+      }
+      // 2. Validar tipos legados (PRD 03 Passo 3). Bloqueia se houver.
+      const hasProventos = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='proventos'")
+        .get();
+      if (!hasProventos) {
+        // Banco sem proventos: nada a migrar — apenas garantir novo CHECK no init.sql.
+        return;
+      }
+      const invalidos = db.prepare(`
+        SELECT id, tipo FROM proventos
+        WHERE tipo IS NOT NULL
+          AND UPPER(TRIM(tipo)) NOT IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')
+      `).all();
+      if (invalidos.length) {
+        throw new Error(
+          `[migration 1.4] Existem proventos com tipo não reconhecido: ` +
+          `ids=${invalidos.map(r => r.id).join(',')} ` +
+          `tipos=${[...new Set(invalidos.map(r => r.tipo))].join(',')}. ` +
+          `Migração interrompida — corrija manualmente antes de tentar de novo.`
+        );
+      }
+      // 3. Verificar se já tem o CHECK constraint novo — idempotência.
+      const tableSql = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='proventos'"
+      ).get();
+      if (tableSql && /CHECK\s*\(\s*tipo\s*IN/.test(tableSql.sql) &&
+          /AMORTIZACAO/.test(tableSql.sql)) {
+        // Já migrado — só garantir índices (idempotência).
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_proventos_ativo_data
+            ON proventos(ativo_id, data_pagto DESC);
+          CREATE INDEX IF NOT EXISTS idx_proventos_tipo_data
+            ON proventos(tipo, data_pagto DESC);
+        `);
+        return;
+      }
+      // 4. Recriar tabela com CHECK (PRD 03 Passos 4-7).
+      //
+      // IMPORTANTE: `runMigrations` envolve `up(db)` em `db.transaction()`.
+      // Portanto NÃO podemos usar BEGIN/COMMIT aqui dentro (SQLite recusa
+      // "cannot start a transaction within a transaction"). Confiamos na
+      // transação wrapper para atomicidade. As validações count + sums +
+      // FK + integrity pós-execução são o fallback em caso de exceptions
+      // (a wrapper faz ROLLBACK automaticamente se qualquer throw acontecer).
+      //
+      // Como `proventos` só tem FK de saída (→ ativos) e a tabela destino
+      // é recriada com a mesma FK para o mesmo id, o `DROP TABLE` original
+      // não viola `PRAGMA foreign_keys` mesmo com FK=ON.
+      const rowsBefore = db.prepare('SELECT COUNT(*) AS c FROM proventos').get().c;
+      const idsBefore = db.prepare('SELECT COALESCE(SUM(id), 0) AS s FROM proventos').get().s;
+      const ativosBefore = db.prepare('SELECT COALESCE(SUM(ativo_id), 0) AS s FROM proventos').get().s;
+      const valoresBefore = db.prepare('SELECT COALESCE(SUM(valor_por_cota), 0) AS s FROM proventos').get().s;
+
+      db.exec(`
+        DROP TABLE IF EXISTS proventos_v2;
+        CREATE TABLE proventos_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ativo_id INTEGER NOT NULL,
+          data_com TEXT,
+          data_pagto TEXT NOT NULL,
+          valor_por_cota REAL NOT NULL,
+          tipo TEXT NOT NULL DEFAULT 'DIVIDENDO'
+            CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')),
+          FOREIGN KEY (ativo_id) REFERENCES ativos(id)
+        );
+        INSERT INTO proventos_v2 (id, ativo_id, data_com, data_pagto, valor_por_cota, tipo)
+        SELECT id, ativo_id, data_com, data_pagto, valor_por_cota,
+               CASE WHEN tipo IS NULL THEN 'DIVIDENDO' ELSE UPPER(TRIM(tipo)) END
+        FROM proventos;
+        DROP TABLE proventos;
+        ALTER TABLE proventos_v2 RENAME TO proventos;
+        CREATE INDEX idx_proventos_ativo_data ON proventos(ativo_id, data_pagto DESC);
+        CREATE INDEX idx_proventos_tipo_data ON proventos(tipo, data_pagto DESC);
+      `);
+
+      // 5. Validações pós-migração (PRD 03 Passo 6 + 9).
+      const rowsAfter = db.prepare('SELECT COUNT(*) AS c FROM proventos').get().c;
+      const idsAfter = db.prepare('SELECT COALESCE(SUM(id), 0) AS s FROM proventos').get().s;
+      const ativosAfter = db.prepare('SELECT COALESCE(SUM(ativo_id), 0) AS s FROM proventos').get().s;
+      const valoresAfter = db.prepare('SELECT COALESCE(SUM(valor_por_cota), 0) AS s FROM proventos').get().s;
+      if (rowsAfter !== rowsBefore || idsAfter !== idsBefore ||
+          ativosAfter !== ativosBefore ||
+          Math.abs(valoresAfter - valoresBefore) > 0.000001) {
+        throw new Error(
+          `[migration 1.4] Validação falhou — rows(${rowsBefore}→${rowsAfter}) ` +
+          `ids(${idsBefore}→${idsAfter}) ativos(${ativosBefore}→${ativosAfter}) ` +
+          `valores(${valoresBefore}→${valoresAfter})`
+        );
+      }
+      const fkViolations = db.prepare('PRAGMA foreign_key_check(proventos)').all();
+      if (fkViolations.length) {
+        throw new Error(
+          `[migration 1.4] foreign_key_check falhou: ${JSON.stringify(fkViolations)}`
+        );
+      }
+      const integrity = db.prepare('PRAGMA integrity_check').get();
+      if (integrity.integrity_check !== 'ok') {
+        throw new Error(`[migration 1.4] integrity_check falhou: ${integrity.integrity_check}`);
+      }
+      // 6. Bump versão é responsabilidade do wrapper runMigrations.
+      // Não duplicamos aqui dentro da transaction porque o wrapper
+      // já faz `INSERT OR REPLACE INTO config (versao_schema)` em
+      // sequência atômica.
     }
   }
 ];

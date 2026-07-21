@@ -70,11 +70,13 @@ describe('parseHashRoute', () => {
 
   // PRD 02 sub-PR 4 (RF-019 / RF-022): #posicoes com query string deve
   // navegar para Posições, NÃO para Dashboard.
+  // PRD 03 amplia: a query string também é parseada e devolvida em params
+  // (ex: #proventos?tipos=AMORTIZACAO → params.tipos='AMORTIZACAO').
   test('#posicoes com query string navega para Posições', () => {
     expect(parseHashRoute('#posicoes?filtro=ATENCAO,CRITICO', STATIC_ROUTE_NAMES)).toEqual({
       page: 'posicoes',
       nav: 'posicoes',
-      params: {},
+      params: { filtro: 'ATENCAO,CRITICO' },
     });
   });
 
@@ -87,10 +89,28 @@ describe('parseHashRoute', () => {
   });
 
   test('#posicoes?filtro=inválido ainda navega para Posições (filtro descartado)', () => {
+    // PRD 03: o parser do router aceita a query MAS a CAMADA de página
+    // (renderPosicoes) é responsável por validar/descartar valores inválidos.
     expect(parseHashRoute('#posicoes?filtro=junk', STATIC_ROUTE_NAMES)).toEqual({
       page: 'posicoes',
       nav: 'posicoes',
-      params: {},
+      params: { filtro: 'junk' },
+    });
+  });
+
+  test('#proventos?tipos=AMORTIZACAO,DIVIDENDO retorna params.tipos (PRD 03 RF-013)', () => {
+    expect(parseHashRoute('#proventos?tipos=AMORTIZACAO,DIVIDENDO', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'proventos',
+      nav: 'proventos',
+      params: { tipos: 'AMORTIZACAO,DIVIDENDO' },
+    });
+  });
+
+  test('#fii/HGLG11?tipo=PRUMADO mantém ticker E tem params.tipo', () => {
+    expect(parseHashRoute('#fii/HGLG11?tipo=PRUMADO', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'fii-detail',
+      nav: 'posicoes',
+      params: { ticker: 'HGLG11', tipo: 'PRUMADO' },
     });
   });
 });

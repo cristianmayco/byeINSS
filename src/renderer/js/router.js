@@ -27,18 +27,31 @@
     const raw = String(hash ?? '').replace(/^#/, '');
     const staticRoutes = new Set(staticRouteNames);
 
-    if (staticRoutes.has(raw)) {
-      return { page: raw, nav: raw, params: {} };
+    // Extrai path (antes do '?') e query string (depois do '?')
+    const qIdx = raw.indexOf('?');
+    const path = qIdx === -1 ? raw : raw.slice(0, qIdx);
+    const queryStr = qIdx === -1 ? '' : raw.slice(qIdx + 1);
+    const params = {};
+    if (queryStr) {
+      for (const part of queryStr.split('&')) {
+        if (!part) continue;
+        const eq = part.indexOf('=');
+        const k = decodeURIComponent(eq === -1 ? part : part.slice(0, eq));
+        const v = eq === -1 ? '' : decodeURIComponent(part.slice(eq + 1));
+        if (k) params[k] = v;
+      }
+    }
+
+    if (staticRoutes.has(path)) {
+      return { page: path, nav: path, params };
     }
 
     // PRD 02 sub-PR 4 (RF-019/RF-022): #posicoes?filtro=ATENCAO,CRITICO
     // é uma rota estática com query string, não um caminho dinâmico.
-    // O split('/') abaixo jogaria para o dashboard incorretamente.
-    if (raw === 'posicoes' || raw.startsWith('posicoes?')) {
-      return { page: 'posicoes', nav: 'posicoes', params: {} };
-    }
+    // Mantido como atalho para compat — `staticRoutes.has(path)` já cobre.
+    // PRD 03: #proventos?tipos=AMORTIZACAO — atendido pela query parsing acima.
 
-    const parts = raw.split('/');
+    const parts = path.split('/');
     if (parts.length !== 2 || parts[0] !== 'fii') {
       return dashboardRoute();
     }
@@ -60,7 +73,7 @@
     return {
       page: 'fii-detail',
       nav: 'posicoes',
-      params: { ticker }
+      params: { ...params, ticker }
     };
   }
 
