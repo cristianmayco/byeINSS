@@ -20,7 +20,7 @@ Sistema desktop (Electron) para acompanhar investimentos, simular FIRE (independ
 | **Cenários** | Salvar múltiplos planos (FIRE, patrimônio, aposentadoria) e comparar lado a lado |
 | **Configurações** | Thresholds de preço, reajuste anual, alertas de concentração/DY |
 | **Importar** | Login embutido no I10 (browser isolado) + **enriquecer com P/VP/vacância** + **agenda de dividendos** |
-| **Vencimento de contratos** *(PRD 12, schema 1.2, backend only)* | Vencimento médio de contratos + tipo de reajuste (IGPM/IPCA/FIXO/MISTO/OUTRO) por FII. Alerta via `GET /api/dashboard/alertas-vencimento` quando vencimento < janela (default 24m, configurável). Endpoints REST prontos (`GET/PUT /api/fiis/contratos/:ticker`); UI de detalhe/bloco de alerta e scraper I10 em sub-PRs seguintes |
+| **Vencimento de contratos** *(PRD 12, schema 1.2)* | Vencimento médio de contratos + tipo de reajuste (IGPM/IPCA/FIXO/MISTO/OUTRO) por FII. **Detalhe por FII** em `#fii/:ticker` com card "Contratos & Reajuste" + modal acessível de edição manual (`PUT /api/fiis/contratos/:ticker`), e **bloco de alerta no Dashboard** quando vencimento < janela (default 24m, ajustável em Configurações). Scraper I10 ainda não incluído |
 
 ---
 
@@ -142,7 +142,7 @@ Após popular o banco, o app calcula em tempo real:
 - **Top posições** com % atual vs % ideal na carteira
 - **Sinais de preço-teto**: oportunidades (abaixo do "muito bom"), no teto, caro
 - **Alertas de concentração** (ativos muito acima do % ideal)
-- **Vencimento de contratos** (PRD 12): alerta de FIIs de Tijolo com vencimento médio < janela configurável (default 24m). Endpoint `/api/dashboard/alertas-vencimento` lista os FIIs com pressão de renegociação se aproximando.
+- **Vencimento de contratos** (PRD 12): alerta de FIIs de Tijolo com vencimento médio < janela configurável (default 24m, ajustável em Configurações). O Dashboard exibe o card com a lista; em **Posições**, o ticker do FII virou link para `#fii/:ticker`, abrindo o detalhe com data, meses até vencer, tipo de reajuste e modal de edição manual. Endpoint `/api/dashboard/alertas-vencimento` lista os FIIs com pressão de renegociação se aproximando.
 
 > Os dados ficam 100% locais no seu SQLite — nada é enviado para lugar nenhum.
 

@@ -181,9 +181,24 @@ router.get('/alertas', (req, res) => {
 
   const totalPatrimonio = posicoes.reduce((acc, p) => acc + (Number(p.qtd || 0) * Number(p.preco_atual || 0)), 0);
 
+  const brl = (v) => `R$ ${Number(v).toFixed(2)}`;
   const alertas = [];
   posicoes.forEach(p => {
     const qtd = Number(p.qtd || 0);
+    const preco = Number(p.preco_atual || 0);
+
+    // Alerta de preço-teto / oportunidade — para TODOS os FIIs ativos que tenham
+    // preço-teto definido e cotação atual, independente de já possuir o ativo
+    // (é um sinal de compra e vale tanto para carteira quanto para watchlist).
+    if (preco > 0 && p.preco_teto) {
+      if (p.preco_muito_bom && preco <= p.preco_muito_bom) {
+        alertas.push({ tipo: 'OPORTUNIDADE', ticker: p.ticker, msg: `${p.ticker} MUITO BARATO: ${brl(preco)} ≤ muito bom ${brl(p.preco_muito_bom)}`, valor: preco });
+      } else if (preco <= p.preco_teto) {
+        alertas.push({ tipo: 'PRECO_TETO', ticker: p.ticker, msg: `${p.ticker} no preço-teto: ${brl(preco)} ≤ teto ${brl(p.preco_teto)}`, valor: preco });
+      }
+    }
+
+    // Concentração e DY: só fazem sentido para posições efetivamente detidas.
     if (qtd <= 0) return;
     const pct = totalPatrimonio > 0 ? (qtd * p.preco_atual / totalPatrimonio) * 100 : 0;
     if (pct > concLimite) {

@@ -118,6 +118,15 @@ describe('migration 1.0 em DB legado (schema 1.1)', () => {
     const db = legacyDb();
     // Aplica migration 1.0a + 1.0b manualmente:
     db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT DEFAULT (datetime('now')),
+        duration_ms INTEGER,
+        rows_before INTEGER,
+        rows_after INTEGER,
+        reversible INTEGER DEFAULT 1
+      );
       ALTER TABLE ativos ADD COLUMN vencimento_medio_contratos DATE;
       ALTER TABLE ativos ADD COLUMN vencimento_medio_contratos_meses INTEGER;
       ALTER TABLE ativos ADD COLUMN tipo_reajuste TEXT;

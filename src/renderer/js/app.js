@@ -57,22 +57,38 @@ const routes = {
   fire: renderFire,
   cenarios: renderCenarios,
   importar: renderImportar,
-  config: renderConfig
+  config: renderConfig,
+  'fii-detail': renderFiiDetail
 };
 
 let chartsToDestroy = [];
 
 function destroyCharts() { chartsToDestroy.forEach(c => c.destroy()); chartsToDestroy = []; }
 
-async function navigate(route) {
+async function navigate(routeOrHash) {
   destroyCharts();
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === route));
-  const fn = routes[route] || routes.dashboard;
-  const el = document.getElementById(`page-${route}`);
+
+  const staticRoutes = Object.keys(routes).filter(route => route !== 'fii-detail');
+  const parsed = window.parseHashRoute(routeOrHash, staticRoutes);
+  const fn = routes[parsed.page] || routes.dashboard;
+  const el = document.getElementById(`page-${parsed.page}`) || document.getElementById('page-dashboard');
+
+  document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(item => {
+    const active = item.dataset.route === parsed.nav;
+    item.classList.toggle('active', active);
+    if (active) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
   el.classList.add('active');
+
   try {
-    await fn(el);
+    await fn(el, parsed.params);
+    const title = el.querySelector('.page-title');
+    if (title) {
+      if (!title.hasAttribute('tabindex')) title.setAttribute('tabindex', '-1');
+      title.focus();
+    }
   } catch (e) {
     el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div>${escapeHtml(e.message)}</div></div>`;
     console.error(e);
@@ -87,7 +103,7 @@ document.querySelectorAll('.nav-item').forEach(n => {
   });
 });
 
-window.addEventListener('hashchange', () => navigate(location.hash.slice(1) || 'dashboard'));
+window.addEventListener('hashchange', () => navigate(location.hash || '#dashboard'));
 
 // Health check + boot
 async function checkHealth() {
@@ -105,6 +121,6 @@ async function checkHealth() {
 (async function init() {
   await checkHealth();
   setInterval(checkHealth, 10000);
-  const initial = location.hash.slice(1) || 'dashboard';
+  const initial = location.hash || '#dashboard';
   navigate(initial);
 })();

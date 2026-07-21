@@ -25,7 +25,15 @@ function setupDb() {
     CREATE TABLE ativos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ticker TEXT NOT NULL UNIQUE,
-      tipo TEXT NOT NULL DEFAULT 'FII'
+      tipo TEXT NOT NULL DEFAULT 'FII',
+      vencimento_medio_contratos DATE,
+      vencimento_medio_contratos_meses INTEGER,
+      tipo_reajuste TEXT,
+      reajuste_percentual REAL,
+      vencimento_medio_origem TEXT,
+      vencimento_medio_coletado_em TEXT,
+      alerta_vencimento INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE fii_scraper_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,7 +59,7 @@ describe('GET /api/fiis/contratos/:ticker', () => {
   afterEach(() => { db.close(); });
 
   it('retorna 404 para ticker inexistente', async () => {
-    const res = await request(app).get('/api/fiis/contratos/NAOEXISTE11');
+    const res = await request(app).get('/api/fiis/contratos/AAAA11');
     expect(res.status).toBe(404);
   });
 
@@ -123,7 +131,7 @@ describe('PUT /api/fiis/contratos/:ticker', () => {
 
   it('404 quando ticker não existe', async () => {
     const res = await request(app)
-      .put('/api/fiis/contratos/NAOEXISTE11')
+      .put('/api/fiis/contratos/AAAA11')
       .send({ vencimento_medio_contratos_meses: 18 });
     expect(res.status).toBe(404);
   });

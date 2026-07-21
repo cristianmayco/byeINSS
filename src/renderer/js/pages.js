@@ -1,13 +1,23 @@
 // === PÁGINAS ===
 
+let dashboardRenderSequence = 0;
+
 // ============ DASHBOARD ============
 async function renderDashboard(el) {
-  const [resumo, evolucao, proventos, alertas] = await Promise.all([
+  const renderSequence = ++dashboardRenderSequence;
+  const contractAlertsRequest = api('/api/dashboard/alertas-vencimento')
+    .catch(error => {
+      console.error(error);
+      return { janela: 24, itens: [] };
+    });
+  const [resumo, evolucao, proventos, alertas, alertasVencimento] = await Promise.all([
     api('/api/dashboard/resumo'),
     api('/api/dashboard/evolucao'),
     api('/api/dashboard/proventos-mensais'),
-    api('/api/dashboard/alertas')
+    api('/api/dashboard/alertas'),
+    contractAlertsRequest
   ]);
+  if (renderSequence !== dashboardRenderSequence) return;
 
   const lucro = resumo.ganho_capital;
   const lucroClass = lucro >= 0 ? 'positive' : 'negative';
@@ -20,6 +30,8 @@ async function renderDashboard(el) {
         <div class="page-subtitle">Visão geral da sua carteira</div>
       </div>
     </div>
+
+    <div id="dashboard-contract-alerts"></div>
 
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-label">Patrimônio</div>
@@ -69,6 +81,18 @@ async function renderDashboard(el) {
     </div>
   `;
 
+  const openTickers = new Set(
+    (resumo.posicoes || [])
+      .filter(position => Number(position.qtd) > 0)
+      .map(position => position.ticker)
+  );
+  const contractItems = (alertasVencimento.itens || [])
+    .filter(item => openTickers.has(item.ticker));
+  window.byeINSSContratosUI.renderDashboardContractAlerts(
+    document.getElementById('dashboard-contract-alerts'),
+    { items: contractItems, janela: alertasVencimento.janela || 24 }
+  );
+
   // Gráfico de evolução
   chartsToDestroy.push(new Chart(document.getElementById('chart-evolucao'), {
     type: 'line',
@@ -107,6 +131,129 @@ async function renderDashboard(el) {
   }));
 }
 
+// ============ DETALHE DO FII ============
+async function renderFiiDetail(el, { ticker } = {}) {
+  const normalizedTicker = window.normalizeFiiTicker(ticker);
+  el.replaceChildren();
+
+  const header = document.createElement('div');
+  header.className = 'page-header';
+  const headerContent = document.createElement('div');
+  const back = document.createElement('a');
+  back.className = 'detail-back-link';
+  back.href = '#posicoes';
+  back.textContent = '← Voltar para Posições';
+  const title = document.createElement('h1');
+  title.className = 'page-title';
+  title.textContent = normalizedTicker || (ticker ? `FII ${String(ticker)}` : 'Detalhe do FII');
+  const subtitle = document.createElement('p');
+  subtitle.className = 'page-subtitle';
+  subtitle.textContent = 'Indicadores operacionais do fundo';
+  headerContent.append(back, title, subtitle);
+  header.appendChild(headerContent);
+  el.appendChild(header);
+
+  if (!normalizedTicker) {
+    const state = document.createElement('div');
+    state.className = 'empty-state';
+    state.textContent = ticker
+      ? `Ticker de FII inválido ou indisponível: ${String(ticker)}`
+      : 'Ticker do FII não informado.';
+    el.appendChild(state);
+    return;
+  }
+
+  const summaryMount = document.createElement('div');
+  summaryMount.className = 'fii-detail-summary loading-inline';
+  summaryMount.textContent = 'Carregando resumo do FII…';
+  const contractMount = document.createElement('div');
+  contractMount.className = 'contract-card-mount loading-inline';
+  contractMount.textContent = 'Carregando dados de contratos…';
+  el.append(summaryMount, contractMount);
+
+  const contractRequest = api(`/api/fiis/contratos/${encodeURIComponent(normalizedTicker)}`)
+    .then(contrato => ({ contrato, error: null }))
+    .catch(error => ({ contrato: null, error }));
+
+  let ativos;
+  try {
+    ativos = await api('/api/ativos?ativo_only=1');
+  } catch (error) {
+    summaryMount.className = 'empty-state';
+    summaryMount.textContent = 'Não foi possível carregar o resumo deste FII.';
+    contractMount.replaceChildren();
+    console.error(error);
+    return;
+  }
+
+  const ativo = ativos.find(item => item.ticker === normalizedTicker && item.tipo === 'FII');
+  if (!ativo) {
+    summaryMount.className = 'empty-state';
+    summaryMount.textContent = `FII ${normalizedTicker} não encontrado entre os ativos cadastrados.`;
+    contractMount.remove();
+    await contractRequest;
+    return;
+  }
+
+  renderFiiSummary(summaryMount, ativo);
+  const contractResult = await contractRequest;
+
+  function renderContractCard(contrato, error = null) {
+    contractMount.className = 'contract-card-mount';
+    const card = window.byeINSSContratosUI.createContractCard({
+      ativo,
+      contrato,
+      error: error?.message || error,
+      onEdit: () => {
+        const trigger = contractMount.querySelector('[data-action="edit"]');
+        window.byeINSSContratosUI.openContractEditModal({
+          ativo,
+          contrato,
+          trigger,
+          background: document.querySelector('.content') || document.querySelector('main'),
+          onSave: payload => api(`/api/fiis/contratos/${encodeURIComponent(normalizedTicker)}`, {
+            method: 'PUT',
+            body: payload
+          }),
+          onSaved: updated => {
+            renderContractCard(updated);
+            contractMount.querySelector('[data-action="edit"]')?.focus();
+            toast('Dados de contratos atualizados');
+          }
+        });
+      }
+    });
+    contractMount.replaceChildren(card);
+  }
+
+  renderContractCard(contractResult.contrato, contractResult.error);
+}
+
+function renderFiiSummary(mount, ativo) {
+  mount.replaceChildren();
+  mount.className = 'fii-detail-summary card';
+
+  const fields = [
+    ['Ticker', ativo.ticker],
+    ['Segmento', ativo.segmento || 'Não informado'],
+    ['Quantidade', Number(ativo.qtd_total || 0).toLocaleString('pt-BR')],
+    ['Preço médio', brl(ativo.preco_medio)],
+    ['Preço atual', brl(ativo.preco_atual)]
+  ];
+
+  for (const [label, value] of fields) {
+    const item = document.createElement('div');
+    item.className = 'fii-summary-item';
+    const itemLabel = document.createElement('span');
+    itemLabel.className = 'fii-summary-label';
+    itemLabel.textContent = label;
+    const itemValue = document.createElement('strong');
+    itemValue.textContent = String(value);
+    item.append(itemLabel, itemValue);
+    mount.appendChild(item);
+  }
+}
+
 // ============ POSIÇÕES ============
 async function renderPosicoes(el) {
   const [ativos, resumo] = await Promise.all([
@@ -136,10 +283,21 @@ async function renderPosicoes(el) {
               const varClass = p.variacao_pct >= 0 ? 'pos' : 'neg';
               const pvpClass = a.p_vp < 0.85 ? 'pos' : a.p_vp > 1.15 ? 'neg' : 'muted';
               const vacClass = a.vacancia > 20 ? 'neg' : a.vacancia > 10 ? 'pos' : 'muted';
+              const safeTicker = escapeHtml(a.ticker);
+              const safeType = escapeHtml(a.tipo);
+              const safeSegment = escapeHtml(a.segmento || '—');
+              const normalizedTicker = window.normalizeFiiTicker(a.ticker);
+              const tickerCell = a.tipo === 'FII' && normalizedTicker
+                ? `<a class="ticker-link" href="#fii/${encodeURIComponent(normalizedTicker)}" aria-label="Ver detalhes de ${normalizedTicker}"><strong>${safeTicker}</strong></a>`
+                : `<strong>${safeTicker}</strong>`;
+              const safeId = Number.isSafeInteger(Number(a.id)) ? Number(a.id) : null;
+              const editButton = safeId == null
+                ? ''
+                : `<button class="btn btn-sm btn-secondary" onclick="openAtivoModal(${safeId})">Editar</button>`;
               return `<tr>
-                <td><strong>${a.ticker}</strong></td>
-                <td><span class="tag blue">${a.tipo}</span></td>
-                <td class="muted">${a.segmento || '—'}</td>
+                <td>${tickerCell}</td>
+                <td><span class="tag blue">${safeType}</span></td>
+                <td class="muted">${safeSegment}</td>
                 <td>${p.qtd || 0}</td>
                 <td>${brl(p.preco_medio)}</td>
                 <td>${brl(p.preco_atual)}</td>
@@ -150,9 +308,7 @@ async function renderPosicoes(el) {
                 <td>${pct(p.pct_carteira)}</td>
                 <td>${pct(a.alvo_pct_carteira)}</td>
                 <td>${a.nota || '—'}</td>
-                <td>
-                  <button class="btn btn-sm btn-secondary" onclick="openAtivoModal(${a.id})">Editar</button>
-                </td>
+                <td>${editButton}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -516,12 +672,20 @@ async function renderPrecoTeto(el) {
         </tr></thead>
         <tbody>${ativos.map(a => {
           let sinal = '<span class="tag">—</span>';
-          if (a.preco_atual && a.preco_muito_bom && a.preco_atual <= a.preco_muito_bom)
+          if (!a.preco_atual || !a.preco_teto) {
+            // Sem cotação ou sem preço-teto definido: não há como classificar
+            sinal = a.preco_teto
+              ? '<span class="tag">— sem cotação</span>'
+              : '<span class="tag">— defina o teto</span>';
+          } else if (a.preco_muito_bom && a.preco_atual <= a.preco_muito_bom) {
             sinal = '<span class="tag green">🟢 MUITO BARATO</span>';
-          else if (a.preco_atual && a.preco_teto && a.preco_atual <= a.preco_teto)
+          } else if (a.preco_atual <= a.preco_teto) {
             sinal = '<span class="tag yellow">🎯 NO TETO</span>';
-          else if (a.preco_atual && a.preco_teto && a.preco_atual > a.preco_teto * 1.1)
+          } else if (a.preco_atual <= a.preco_teto * 1.1) {
+            sinal = '<span class="tag yellow">🟡 PRÓXIMO DO TETO</span>';
+          } else {
             sinal = '<span class="tag red">🔴 CARO</span>';
+          }
           return `<tr>
             <td><strong>${a.ticker}</strong></td>
             <td>${a.preco_atual ? brl(a.preco_atual) : '—'}</td>
@@ -807,18 +971,43 @@ async function renderConfig(el) {
         <div class="form-row"><label class="form-label">DY 12M máximo para alerta (%)</label>
           <input id="c-dy" type="number" step="0.1" value="${v('alerta_dy_limite')}">
           <small class="muted">DY acima disso = amarelo (possível unsustainable)</small></div>
+        <div class="form-row"><label class="form-label" for="c-vencimento-janela">Janela de alerta de vencimento (meses)</label>
+          <input id="c-vencimento-janela" type="number" min="1" step="1" aria-describedby="c-vencimento-janela-help">
+          <small class="muted" id="c-vencimento-janela-help">Gera alerta quando o vencimento for inferior a este valor. Padrão: 24 meses.</small></div>
       </div>
     </div>
 
     <div class="card" style="border-color: var(--primary);">
       <button class="btn btn-primary" id="btn-save-config">💾 Salvar configurações</button>
-      <span id="config-status" style="margin-left:12px;"></span>
+      <span id="config-status" role="status" aria-live="polite" style="margin-left:12px;"></span>
     </div>
   `;
+  const alertWindowInput = document.getElementById('c-vencimento-janela');
+  const alertWindowValue = Number(cfg.vencimento_janela_alerta_meses);
+  alertWindowInput.value = Number.isInteger(alertWindowValue) && alertWindowValue > 0
+    ? String(alertWindowValue)
+    : '';
   document.getElementById('btn-save-config').onclick = saveConfig;
 }
 
 async function saveConfig() {
+  const alertWindowInput = document.getElementById('c-vencimento-janela');
+  const alertWindow = Number(alertWindowInput.value);
+  const configStatus = document.getElementById('config-status');
+
+  if (!Number.isInteger(alertWindow) || alertWindow <= 0) {
+    alertWindowInput.setAttribute('aria-invalid', 'true');
+    alertWindowInput.focus();
+    configStatus.setAttribute('role', 'alert');
+    configStatus.textContent = 'Informe uma janela em meses inteiros maior que zero.';
+    toast('Janela de vencimento inválida', 'error');
+    return;
+  }
+
+  alertWindowInput.removeAttribute('aria-invalid');
+  configStatus.setAttribute('role', 'status');
+  configStatus.textContent = '';
+
   const body = {
     pct_muito_barato: parseFloat(document.getElementById('c-pct-mb').value),
     pct_barato: parseFloat(document.getElementById('c-pct-b').value),
@@ -827,11 +1016,13 @@ async function saveConfig() {
     reajuste_mes_inicio: parseInt(document.getElementById('c-mes-inicio').value),
     taxa_anual_padrao: parseFloat(document.getElementById('c-taxa').value),
     alerta_concentracao_pct: parseFloat(document.getElementById('c-conc').value),
-    alerta_dy_limite: parseFloat(document.getElementById('c-dy').value)
+    alerta_dy_limite: parseFloat(document.getElementById('c-dy').value),
+    vencimento_janela_alerta_meses: alertWindow
   };
   try {
     await api('/api/config', { method: 'PUT', body });
-    document.getElementById('config-status').innerHTML = '<span class="tag green">✓ salvo</span>';
+    configStatus.textContent = '✓ salvo';
+    configStatus.className = 'tag green';
     toast('Configurações salvas');
   } catch (e) { toast(e.message, 'error'); }
 }
