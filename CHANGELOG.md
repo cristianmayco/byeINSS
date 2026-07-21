@@ -5,6 +5,55 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+### Added — PRD 02: Indicadores Históricos de DY e Rentabilidade Real (schema 1.3)
+
+- **Schema 1.3 — migration versionada**: 9 colunas nullable em `ativos`
+  (`dy_medio_5a`, `rentab_nominal_1a/2a/5a`, `rentab_real_1a/2a/5a`,
+  `dy_medio_5a_fonte`, `dy_medio_5a_atualizado_em`) + seed
+  `indicador_dy_vs_5a_abaixo_pct=95` (threshold configurável).
+  Idempotente; cobre caminho fresh install e DBs legados 1.1/1.2.
+- **Lógica pura em `src/shared/indicadores.js`**:
+  - `calcularDyVs5a({ dy_12m, dy_medio_5a })` → razão + pct + flag
+    `HISTORICO_ZERADO` para divisão por zero.
+  - `classificarDyVs5a({ pct, limiar_abaixo_pct, limiar_acima_pct })`
+    → `{ classificacao, severidade, motivo }` com boundaries
+    `≤80 CRITICO / <95 ATENCAO / ≤105 EM_LINHA / <125 ATENCAO / >125 CRITICO`.
+  - `mergeIndicadores(prev, novo, opts)` → persistência segura (RF-008):
+    `null` em novo NÃO apaga valor anterior.
+  - `normalizarRotuloRentabilidade` (`1a`|`1 ano`|`12 meses` → `1a`).
+  - `parsePercentBr('12,34%')` → `12.34` (suporta formato BR com milhar).
+- **Scraper I10 estendido** (`src/main/scraper.js`): `extractFIIDetalhes`
+  agora extrai `dy_medio_5a` (multi-label) e a tabela de **Rentabilidade**
+  (Nominal/Real × 1a/2a/5a) com parser multi-layout.
+  `extractAllFIIDetalhes` persiste via `mergeIndicadores`.
+- **Endpoints REST**:
+  - `GET  /api/fiis/indicadores` — lista FIIs com classificação e
+    `meta.contadores_por_severidade`.
+  - `GET  /api/fiis/indicadores/:ticker` — detalhe individual
+    (regex `^[A-Z]{4}11$`, 400/404 apropriados).
+  - `POST /api/fiis/scraper/indicadores/resync` — dispara enriquecimento
+    em lote (body opcional `{ tickers?: string[] }`). Falha de um ticker
+    NÃO derruba o batch (RF-007). Idempotente (RF-008).
+  - `GET  /api/fiis/scraper/indicadores/status` — health-check.
+- **UI Posições**: 2 colunas novas — **DY vs 5y** (badge com cor por
+  severidade, tooltip explicativo) e **Rent. real 12M** (formato pt-BR,
+  classe `--negative` para valores negativos).
+- **UI Dashboard**: bloco de alerta "DY 12M abaixo da média histórica
+  de 5 anos" com lista dos FIIs afetados, link para `#fii/:ticker`,
+  respeita `renderSequence` para evitar race entre navegações.
+- **A11y**: `role="status"` + `aria-label` descritivo nos badges;
+  `aria-labelledby` ligando o bloco de alerta ao `<h3>`; tooltip via
+  `title` nativo; fallback `—` (sem inventar dado).
+- **Testes**:
+  - `src/__tests__/shared/indicadores.test.js` (45 casos).
+  - `src/__tests__/integration/api-indicadores.test.js` (20 casos).
+  - `src/__tests__/integration/api-scraper-indicadores.test.js` (11 casos).
+  - `src/__tests__/renderer/indicadores-ui.test.js` (29 casos).
+  - `src/__tests__/db-migrations.test.js` estendida (14 casos totais).
+  - `scripts/test-migrations-smoke.js` estendida (64 casos totais).
+- **Gates**: `schema-reviewer` APPROVE + `electron-security-reviewer` APPROVED.
+- **Total**: 330/330 vitest (era 219 antes) + 64/64 smoke. Zero regressão.
+
 ### Fixed — Alertas de preço-teto
 
 - **Dashboard `/api/dashboard/alertas` nunca emitia alerta de preço-teto**: o endpoint só gerava `CONCENTRACAO` e `DY_ALTO`, embora o frontend já tivesse ícones para `PRECO_TETO` (🎯) e `OPORTUNIDADE` (🟢). Agora emite esses alertas para **todos** os FIIs ativos com preço-teto e cotação (independente de já possuir o ativo — vale como sinal de compra na watchlist). O guard `if (qtd <= 0) return` deixava de fora FIIs não detidos; alertas de preço agora rodam antes desse guard, enquanto concentração/DY seguem restritos a posições detidas.
