@@ -46,6 +46,29 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - **A11y transversal**: `<nav aria-label>`, `aria-current="page"` no item ativo, `<div role="status" aria-live="polite">` no toast e no `#config-status`, foco no `.page-title` (`tabindex=-1`) após cada navegação, links de ticker com `aria-label` próprio.
 - **Testes Vitest + jsdom**: stack novo (`vitest`, `jsdom`, `supertest` em devDependencies) com `npm test` / `npm run test:watch`. Suítes em `src/__tests__/renderer/` cobrem router, contratos-ui, dashboard-contratos, pages-contratos, config-contratos e app-routing. 144 testes Vitest passando; suites de smoke e E2E permanecem verdes.
 
+### Added — PRD 12: Vencimento Médio de Contratos (sub-PR 3 scraper)
+
+- **Parsers puros em `src/shared/scraper-contratos.js`** (sem dependência de Electron/better-sqlite3):
+  - `parseContratoFromMainHTML(html)` — extrai vencimento + tipo de reajuste da página `/fiis/{ticker}/`, com heurística multi-seletor que prefere blocos `<section>`/`<div>` com id|class contendo "contrato|reajuste" antes de "sobre|informações" (RF-007 resiliência a mudanças de layout).
+  - `parseContratoFromComunicadoHTML(html, comunicadoDate)` — fallback da página `/fiis/{ticker}/comunicados/`, isola o `<article data-date>` mais recente.
+  - `parseContratoFromFallbackHTML(html)` — última linha: scan global do HTML.
+  - `parseTipoReajusteI10(text, opts)` — detecta IGP-M / IPCA / FIXO / MISTO / OUTRO. Detecta MISTO quando o texto menciona múltiplos índices canônicos ("parte IGP-M, parte IPCA"). FIXO é self-describing ("Fixo 3,5% a.a.") e tem precedência sobre rótulos compostos.
+  - `parseDateBR(text)` / `parseMesNumber(text)` / `brNumberToFloat(raw)` — utilidades puras.
+- **Orchestrator Electron em `src/main/scraper-contratos.js`**:
+  - `fetchContratoData(ticker)` — orquestra main page → fallback Comunicado com timeout duro de 3s por FII (PRD 12 NFR-performance). Não cria nova BrowserWindow; reusa singleton com contextIsolation + sandbox.
+  - `resyncAll(db, opts)` — percorre todos os FIIs (exceto `vencimento_medio_origem='manual'`, RF-009), persiste via `persistContrato()` e loga cada tentativa em `fii_scraper_log` (RF-008).
+  - Falha de um ticker não derruba o batch (PRD 12 §8 RF-007).
+- **Endpoint REST `POST /api/fiis/scraper/contratos/resync`** (`src/server/routes/scraper-contratos.js`):
+  - Body opcional `{ tickers?: string[] }`; se vazio, roda em todos os FIIs da carteira.
+  - Resposta: `{ total, sucessos, falhas, janela_execucao_ms, detalhes: [{ ticker, success, source, persisted, motivo_skip, error, confianca }] }`.
+  - Validação estrita: 400 em ticker inválido, regex FII.
+  - 503 quando o scraper não carrega (Electron indisponível).
+  - Endpoint complementar `GET /status` para health-check.
+- **Fixtures HTML realistas em `src/__tests__/fixtures/i10/`**:
+  - `hglg11.html` (data + IGP-M em bloco estruturado), `knip11.html` (24 meses + FIXO 3,5%), `xpml11.html` (18 meses + MISTO), `mxrf11.html` (papel — vazio intencional), `vino11-fixo.html` (FIXO 3% a.a.), `bcff11-layout-quebrado.html` (FII sem bloco estruturado, parser conservador devolve vazio), `hglg11-comunicado.html` (fallback Comunicado com data+IGPM).
+- **45 testes novos** (`src/__tests__/shared/scraper-contratos.test.js` + `src/__tests__/integration/api-scraper-contratos.test.js`): cobrem happy path + edge cases PRD 12 §8 (RF-007 resiliência, RF-008 log, RF-009 manual override), fixtures variadas, validação de body, persistência transacional, e cenário de falha de um ticker dentro do batch.
+- Total: **219 testes Vitest passando** em 1.38s. PRD 12 §13 agora marca todos os sub-PRs como entregues.
+
 ### Changed
 
 - `src/server/db.js` agora tem função `runMigrations(db)` que mantém `config.versao_schema` em sincronia com a migration aplicada (fix #3 schema-reviewer).
@@ -58,8 +81,8 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ### Out of scope (próximos sub-PRs PRD 12)
 
-- Scraper I10 com extração de vencimento + tipo de reajuste
-- `POST /api/fiis/scraper/contratos/resync`
+- ~~Scraper I10 com extração de vencimento + tipo de reajuste~~ ✅ sub-PR 3
+- ~~`POST /api/fiis/scraper/contratos/resync`~~ ✅ sub-PR 3
 
 ## [1.0.0] — projeto base
 

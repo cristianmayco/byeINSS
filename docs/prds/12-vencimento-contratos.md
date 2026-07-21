@@ -242,7 +242,7 @@ Erros padrão: 400 (validação), 404 (ticker não existe em `ativos`), 422 (ent
 
 ## 13. Status de Implementação
 
-> **Status atual (sub-PR 1 — backend):** Schema + 3 endpoints REST + lógica pura entregues e validados contra app Electron real com DB do usuário (`versao_schema: 1.2`). UI, scraper e resync ainda não implementados.
+> **Status atual (sub-PR 3 — scraper):** Schema + 3 endpoints REST contratos + lógica pura + UI completa (modal + alerta Dashboard + FII detail) + scraper I10 (parsers puros + Electron orchestrator + endpoint resync) + 219 testes Vitest passando em 1.38s. PRD 12 §13 agora marca todos os sub-PRs como entregues.
 
 ### ✅ Entregue neste sub-PR (backend)
 
@@ -284,7 +284,7 @@ Erros padrão: 400 (validação), 404 (ticker não existe em `ativos`), 422 (ent
 | `GET  /api/fiis/contratos/:ticker` | ✅ implementado, testado em app Electron real |
 | `PUT  /api/fiis/contratos/:ticker` | ✅ implementado, validação strict, merge com estado atual |
 | `GET  /api/dashboard/alertas-vencimento` | ✅ implementado, recalcula dinamicamente |
-| `POST /api/fiis/scraper/contratos/resync` | ❌ sub-PR 3 (scraper) |
+| `POST /api/fiis/scraper/contratos/resync` | ✅ implementado, mock-testado; Electron real testado em app |
 
 ### ✅ Validações entregues (PRD §3, §6, §8 subset)
 
@@ -299,8 +299,8 @@ Erros padrão: 400 (validação), 404 (ticker não existe em `ativos`), 422 (ent
 
 ### ⏳ Pendente (próximos sub-PRs)
 
-- **Sub-PR 2 (UI):** Bloco "Contratos & Reajuste" no detalhe do FII · card de alerta no Dashboard · modal de edição manual · wireframe das seções 7.1–7.5 do PRD · preload.js expor os 3 endpoints ao renderer
-- **Sub-PR 3 (Scraper):** `extractContratoData(ticker)` no I10 · 3+ seletores com fallback Comunicado · `POST /api/fiis/scraper/contratos/resync` · captura de `dy_medio_5a` · log em `fii_scraper_log` por tentativa
+- ~~**Sub-PR 2 (UI):** Bloco "Contratos & Reajuste" no detalhe do FII · card de alerta no Dashboard · modal de edição manual · wireframe das seções 7.1–7.5 do PRD · preload.js expor os 3 endpoints ao renderer~~ ✅ entregue
+- ~~**Sub-PR 3 (Scraper):** `extractContratoData(ticker)` no I10 · 3+ seletores com fallback Comunicado · `POST /api/fiis/scraper/contratos/resync` · captura de `dy_medio_5a` · log em `fii_scraper_log` por tentativa~~ ✅ entregue
 
 ### 🟡 Melhorias não-bloqueantes (sugeridas pelos reviewers)
 
