@@ -7,11 +7,10 @@
 //  - RF-022: retorna resumo com contagens por tipo, inseridos, duplicados,
 //            reclassificados, ignorados, erros e tipo_desconhecidos
 //
-// Depende apenas de um objeto better-sqlite3 db (prepares usados aqui
-// são preparados localmente; em ambiente de alta concorrência, considere
-// mover para `transaction(fn)` no caller).
+// Suporta tanto `require()` (CJS, usado por routes/) quanto `import` (ESM, vitest).
+// Para isso expõe tanto module.exports padrão quanto injeta propriedades nomeadas.
 
-import { normalizarTipo } from './agenda-parser.js';
+const { normalizarTipo } = require('./agenda-parser.js');
 
 const VALID_TIPOS = new Set(['DIVIDENDO', 'RENDIMENTO', 'BONIFICACAO', 'AMORTIZACAO']);
 
@@ -30,7 +29,7 @@ const VALID_TIPOS = new Set(['DIVIDENDO', 'RENDIMENTO', 'BONIFICACAO', 'AMORTIZA
  *   tipo_desconhecidos: Array<{ indice, ticker, raw_tipo }>
  * }}
  */
-export function importarProventos(db, itens, opts = {}) {
+function importarProventos(db, itens, opts = {}) {
   const { reconciliarLegados = true } = opts;
 
   const findAtivo = db.prepare('SELECT id FROM ativos WHERE ticker = ?');
@@ -159,4 +158,4 @@ export function importarProventos(db, itens, opts = {}) {
   };
 }
 
-export { VALID_TIPOS };
+module.exports = { importarProventos, VALID_TIPOS };

@@ -2,12 +2,13 @@
 // Localiza colunas pelo HEADER (semântica), tolera ordem variável e
 // normaliza o Tipo (RF-005 — `Dividendos` → `DIVIDENDO`, etc.).
 //
-// Compatível com jsdom e com `executeJavaScript` no Electron renderer
-// (também disponível como `AgendaParser` global no browser/renderer).
+// Dual-mode: funciona tanto em CommonJS (`require()` usado por routes/ e
+// pelo scraper.js) quanto em ESM (`import` usado por vitest). O vitest
+// já tem CJS interop habilitado por padrão.
 
 // Normaliza texto da coluna Tipo para uma chave canônica.
 // Ignora caixa, espaços e acentos. Texto desconhecido → null.
-export function normalizarTipo(raw) {
+function normalizarTipo(raw) {
   if (raw == null) return null;
   const t = String(raw).trim().normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
   if (t === 'dividendo' || t === 'dividendos') return 'DIVIDENDO';
@@ -18,7 +19,7 @@ export function normalizarTipo(raw) {
 }
 
 // Parser BR para número (R$ 1.234,56 → 1234.56). Aceita strings já limpas.
-export function normalizarNumeroBR(raw) {
+function normalizarNumeroBR(raw) {
   if (raw == null || raw === '') return null;
   const cleaned = String(raw).replace(/[^\d,\-.]/g, '');
   const num = Number(cleaned.replace(/\./g, '').replace(',', '.'));
@@ -26,7 +27,7 @@ export function normalizarNumeroBR(raw) {
 }
 
 // DD/MM/YYYY → YYYY-MM-DD
-export function normalizarDataBR(raw) {
+function normalizarDataBR(raw) {
   if (!raw) return null;
   const m = String(raw).match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if (!m) return null;
@@ -34,8 +35,6 @@ export function normalizarDataBR(raw) {
 }
 
 // Tenta achar o índice de uma coluna no thead a partir de padrões de texto.
-// Aceita múltiplas variantes (plural/singular, acentos, espaços).
-// Retorna índice na linha de cabeçalho ou -1 se não achar.
 function acharIndiceColuna(headerCells, patterns) {
   for (let i = 0; i < headerCells.length; i++) {
     const cell = headerCells[i];
@@ -51,24 +50,19 @@ function acharIndiceColuna(headerCells, patterns) {
 
 /**
  * Extrai linhas da tabela de agenda de dividendos do I10.
- * @param {Document} doc - documento (JSDOM document ou document nativo).
- * @param {Object} [opts]
- * @param {string} [opts.tableSelector='table']
- * @returns {{ rows: Array<{ticker, tipo, data_com, data_pagto, valor_por_cota, raw_tipo}>, table_found: boolean, header_columns: string[], missing_columns: object }}
  */
-export function extractAgendaDividendos(doc, opts = {}) {
+function extractAgendaDividendos(doc, opts) {
+  opts = opts || {};
   const tableSelector = opts.tableSelector || 'table';
   const table = doc.querySelector(tableSelector);
   if (!table) return { rows: [], table_found: false, header_columns: [], missing_columns: {} };
 
-  // Tenta pegar cabeçalhos do <thead> primeiro; se vazio, usa a primeira <tr>.
   let headerCells = [...doc.querySelectorAll('thead th, thead td')];
   if (headerCells.length === 0) {
     headerCells = [...table.querySelectorAll('tr:first-child th, tr:first-child td')];
   }
-  const headerColumns = headerCells.map(c => String(c.textContent || '').trim());
+  const headerColumns = headerCells.map(c => String((c.textContent || '')).trim());
 
-  // Localiza colunas por SEMÂNTICA — nunca por posição fixa.
   const idxTipo = acharIndiceColuna(headerCells, ['tipo']);
   const idxTicker = acharIndiceColuna(headerCells, ['fii', 'ticker', 'codigo de negociacao', 'ativo']);
   const idxValor = acharIndiceColuna(headerCells, ['valor por cota', 'valor', 'rendimento']);
@@ -92,7 +86,6 @@ export function extractAgendaDividendos(doc, opts = {}) {
     if (cells.length < 2) return null;
     const get = (i) => (i >= 0 && cells[i] ? cells[i].textContent.trim() : null);
 
-    // Ticker: aceita texto direto OU link com texto
     let tickerRaw = get(idxTicker);
     if (idxTicker >= 0 && cells[idxTicker]) {
       const linkEl = cells[idxTicker].querySelector('a');
@@ -107,13 +100,12 @@ export function extractAgendaDividendos(doc, opts = {}) {
     const tickerMatch = tickerRaw && String(tickerRaw).match(/\b([A-Z]{4}11)\b/);
     const ticker = tickerMatch ? tickerMatch[1] : null;
 
-    // RF-006: tipo desconhecido NÃO vira DIVIDENDO silenciosamente.
     const tipo = normalizarTipo(tipoRaw);
 
     return {
       ticker,
-      tipo,                        // null se desconhecido (RF-006)
-      raw_tipo: tipoRaw || null,    // texto bruto para log/auditoria (RF-022)
+      tipo,
+      raw_tipo: tipoRaw || null,
       data_com: normalizarDataBR(dataComRaw),
       data_pagto: normalizarDataBR(dataPagtoRaw),
       valor_por_cota: normalizarNumeroBR(valorRaw)
@@ -123,8 +115,8 @@ export function extractAgendaDividendos(doc, opts = {}) {
   return { rows, table_found: true, header_columns: headerColumns, missing_columns };
 }
 
-// Expor também como global no renderer (via preload ou script inline).
-// Não usamos Object.defineProperty — só anexa se ainda não existir.
+// Expor como global no contexto browser (Electron renderer), quando carregado
+// via <script> ou executeJavaScript inline.
 if (typeof globalThis !== 'undefined' && !globalThis.AgendaParser) {
   globalThis.AgendaParser = {
     extractAgendaDividendos,
@@ -133,3 +125,10 @@ if (typeof globalThis !== 'undefined' && !globalThis.AgendaParser) {
     normalizarDataBR
   };
 }
+
+module.exports = {
+  extractAgendaDividendos,
+  normalizarTipo,
+  normalizarNumeroBR,
+  normalizarDataBR
+};

@@ -124,21 +124,24 @@ describe('GET /api/dashboard/projecao-proventos', () => {
   beforeEach(() => { db = setupDb(); app = appWithDb(db); });
   afterEach(() => { db.close(); });
 
-  it('projeta anual = último dividendo × qtd × 12', async () => {
+  it('projeta anual = último dividendo × qtd × 12 (PRD 03 RF-017)', async () => {
     seedFii(db, { ticker: 'MCCI11', teto: 114, preco: 95, qtd: 200, pm: 100, div: 0.9 });
     const res = await request(app).get('/api/dashboard/projecao-proventos');
     expect(res.status).toBe(200);
     const d = res.body.detalhes.find(x => x.ticker === 'MCCI11');
     expect(d).toBeTruthy();
-    expect(d.mensal).toBeCloseTo(200 * 0.9, 2);
-    expect(d.anual).toBeCloseTo(200 * 0.9 * 12, 2);
-    expect(res.body.total_anual).toBeGreaterThan(0);
+    expect(d.mensal_distribuivel).toBeCloseTo(200 * 0.9, 2);
+    expect(d.anual_distribuivel).toBeCloseTo(200 * 0.9 * 12, 2);
+    expect(res.body.total_distribuivel_anual).toBeGreaterThan(0);
   });
 
-  it('ignora FII sem dividendo ou sem posição', async () => {
+  it('RF-024: FII sem dividendo entra com mensal=0 e sem_base_recorrente=true', async () => {
     seedFii(db, { ticker: 'SEMDIV11', teto: 100, preco: 90, qtd: 100, pm: 90 }); // sem div
     const res = await request(app).get('/api/dashboard/projecao-proventos');
-    expect(res.body.detalhes.find(x => x.ticker === 'SEMDIV11')).toBeFalsy();
+    const d = res.body.detalhes.find(x => x.ticker === 'SEMDIV11');
+    expect(d).toBeDefined();
+    expect(d.mensal_distribuivel).toBe(0);
+    expect(d.sem_base_recorrente).toBe(true);
   });
 });
 

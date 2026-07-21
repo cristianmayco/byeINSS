@@ -1,6 +1,27 @@
 const express = require('express');
 const router = express.Router();
 
+const {
+  agregarProventosMensais,
+  calcularProjecao
+} = require('../../shared/proventos-helpers.js');
+
+const TIPOS_VALIDOS_DASH = new Set(['DIVIDENDO', 'RENDIMENTO', 'BONIFICACAO', 'AMORTIZACAO']);
+
+function parseTiposDash(q) {
+  if (!q) return null;
+  const arr = String(q).split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  if (arr.length === 0) return null;
+  for (const t of arr) {
+    if (!TIPOS_VALIDOS_DASH.has(t)) {
+      const err = new Error(`Tipo inválido: ${t}`); err.status = 400; throw err;
+    }
+  }
+  return arr;
+}
+
+function isoDateDash(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+
 // Resumo geral
 router.get('/resumo', (req, res) => {
   const db = req.db;
@@ -45,18 +66,42 @@ router.get('/resumo', (req, res) => {
     porTipo[p.tipo] = (porTipo[p.tipo] || 0) + p.saldo;
   });
 
-  // Proventos 12M
-  const proventos12m = db.prepare(`
+  // Proventos 12M — RF-019/020: só DIVIDENDO + RENDIMENTO no numerador
+  // do DY distribuível. Amortizações são reportadas em campo separado.
+  const proventosDistr12m = db.prepare(`
     SELECT SUM(p.valor_por_cota * COALESCE(
       (SELECT SUM(CASE WHEN tipo='COMPRA' THEN quantidade ELSE -quantidade END)
        FROM lancamentos WHERE ativo_id = p.ativo_id AND data <= p.data_pagto), 0)) AS total
     FROM proventos p
     WHERE date(p.data_pagto) >= date('now', '-12 months')
+      AND p.tipo IN ('DIVIDENDO','RENDIMENTO')
+  `).get();
+  const proventosAmort12m = db.prepare(`
+    SELECT SUM(p.valor_por_cota * COALESCE(
+      (SELECT SUM(CASE WHEN tipo='COMPRA' THEN quantidade ELSE -quantidade END)
+       FROM lancamentos WHERE ativo_id = p.ativo_id AND data <= p.data_pagto), 0)) AS total
+    FROM proventos p
+    WHERE date(p.data_pagto) >= date('now', '-12 months')
+      AND p.tipo = 'AMORTIZACAO'
+  `).get();
+  const proventosFluxo12m = db.prepare(`
+    SELECT SUM(p.valor_por_cota * COALESCE(
+      (SELECT SUM(CASE WHEN tipo='COMPRA' THEN quantidade ELSE -quantidade END)
+       FROM lancamentos WHERE ativo_id = p.ativo_id AND data <= p.data_pagto), 0)) AS total
+    FROM proventos p
+    WHERE date(p.data_pagto) >= date('now', '-12 months')
+      AND p.tipo IN ('DIVIDENDO','RENDIMENTO','AMORTIZACAO')
+  `).get();
+  const proventosTotal = db.prepare(`
+    SELECT
+      SUM(valor_por_cota) AS total,
+      SUM(CASE WHEN tipo='AMORTIZACAO' THEN valor_por_cota ELSE 0 END) AS amortizacoes_total
+    FROM proventos
   `).get();
 
-  const proventosTotal = db.prepare(`SELECT SUM(valor_por_cota) AS total FROM proventos`).get();
-
-  const totalProventos12m = Number(proventos12m?.total || 0);
+  const totalProventos12m = Number(proventosDistr12m?.total || 0);
+  const totalAmort12m = Number(proventosAmort12m?.total || 0);
+  const totalFluxo12m = Number(proventosFluxo12m?.total || 0);
   const dy12m = patrimonio > 0 ? (totalProventos12m / patrimonio) * 100 : 0;
 
   res.json({
@@ -64,73 +109,122 @@ router.get('/resumo', (req, res) => {
     valor_investido,
     ganho_capital: patrimonio - valor_investido,
     variacao_pct: valor_investido > 0 ? ((patrimonio - valor_investido) / valor_investido) * 100 : 0,
-    proventos_12m: totalProventos12m,
-    dy_carteira_12m: dy12m,
+    proventos_12m: totalProventos12m,                    // legado = distribuíveis
+    dy_carteira_12m: dy12m,                              // legado = DY distribuível
+    amortizacoes_12m: totalAmort12m,                     // novo (RF-020)
+    fluxo_caixa_proventos_12m: totalFluxo12m,            // novo (RF-020)
     proventos_total: Number(proventosTotal?.total || 0),
+    amortizacoes_total: Number(proventosTotal?.amortizacoes_total || 0),
     por_tipo: porTipo,
     posicoes: posicoesProcessadas
   });
 });
 
-// Proventos por mês (últimos 12 meses)
+// Proventos por mês (últimos 12 meses por padrão).
+// RF-014/016: separa DIVIDENDO+RENDIMENTO (distribuíveis) de AMORTIZACAO e BONIFICACAO.
+// Aceita ?inicio=YYYY-MM-DD&fim=YYYY-MM-DD&tipos=DIVIDENDO,AMORTIZACAO
 router.get('/proventos-mensais', (req, res) => {
-  const db = req.db;
-  const rows = db.prepare(`
-    SELECT
-      strftime('%Y-%m', p.data_pagto) AS mes,
-      SUM(p.valor_por_cota * COALESCE(
-        (SELECT SUM(CASE WHEN tipo='COMPRA' THEN quantidade ELSE -quantidade END)
-         FROM lancamentos WHERE ativo_id = p.ativo_id AND data <= p.data_pagto), 0)) AS total
-    FROM proventos p
-    WHERE date(p.data_pagto) >= date('now', '-12 months')
-    GROUP BY mes ORDER BY mes
-  `).all();
-  res.json(rows);
+  try {
+    const tipos = parseTiposDash(req.query.tipos);
+    let inicio = req.query.inicio;
+    let fim = req.query.fim;
+    if (inicio && !isoDateDash(inicio)) {
+      return res.status(400).json({ error: 'inicio deve ser ISO YYYY-MM-DD' });
+    }
+    if (fim && !isoDateDash(fim)) {
+      return res.status(400).json({ error: 'fim deve ser ISO YYYY-MM-DD' });
+    }
+    if (!inicio || !fim) {
+      const db = req.db;
+      // Default: últimos 12 meses
+      const twelve = db.prepare("SELECT date('now','-12 months') AS d").get();
+      const today = db.prepare("SELECT date('now') AS d").get();
+      inicio = inicio || twelve.d;
+      fim = fim || today.d;
+    }
+
+    const db = req.db;
+    const provsRows = db.prepare(`
+      SELECT p.id, p.ativo_id, a.ticker, p.data_pagto, p.valor_por_cota, p.tipo
+      FROM proventos p
+      JOIN ativos a ON a.id = p.ativo_id
+      WHERE p.data_pagto >= ? AND p.data_pagto <= ?
+      ${tipos ? `AND p.tipo IN (${tipos.map(() => '?').join(',')})` : ''}
+    `).all(...(tipos ? [inicio, fim, ...tipos] : [inicio, fim]));
+
+    // Quantidade elegível por linha
+    const lancCache = new Map();
+    const getLanc = (id) => {
+      if (!lancCache.has(id)) {
+        lancCache.set(id, db.prepare(`
+          SELECT data, tipo, quantidade FROM lancamentos WHERE ativo_id = ? ORDER BY data
+        `).all(id));
+      }
+      return lancCache.get(id);
+    };
+    const enriched = provsRows.map(p => ({
+      ticker: p.ticker, ativo_id: p.ativo_id, data_pagto: p.data_pagto,
+      valor_por_cota: p.valor_por_cota,
+      tipo: p.tipo,
+      // Deferimos o cálculo ao helper (uma única passada pelas posições).
+      quantidade_elegivel: 0  // será sobrescrito abaixo
+    }));
+    // Calcula quantidade elegível para cada item usando helper
+    const { calcularQuantidadeElegivel } = require('../../shared/proventos-helpers.js');
+    enriched.forEach((p, i) => {
+      const original = provsRows[i];
+      const qtd = calcularQuantidadeElegivel(getLanc(p.ativo_id), null, p.data_pagto);
+      p.quantidade_elegivel = qtd;
+    });
+    const serie = agregarProventosMensais(enriched, { inicio, fim });
+    res.json(serie);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
 });
 
-// Projeção anual de proventos: baseado no último dividendo de cada FII × qtd atual
+// Projeção anual de proventos (RF-017/018/024).
+// Aceita ?hoje=YYYY-MM-DD (default = hoje).
 router.get('/projecao-proventos', (req, res) => {
-  const db = req.db;
-  // Para cada ativo, pega o dividendo mais recente e a qtd atual
-  const rows = db.prepare(`
-    SELECT
-      a.id, a.ticker, a.tipo, a.segmento,
-      (SELECT preco FROM cotacoes WHERE ativo_id = a.id ORDER BY data DESC LIMIT 1) AS preco_atual,
-      (SELECT SUM(CASE WHEN tipo='COMPRA' THEN quantidade ELSE -quantidade END)
-       FROM lancamentos WHERE ativo_id = a.id) AS qtd,
-      (SELECT valor_por_cota FROM proventos
-       WHERE ativo_id = a.id ORDER BY data_pagto DESC LIMIT 1) AS ultimo_dividendo,
-      (SELECT data_pagto FROM proventos
-       WHERE ativo_id = a.id ORDER BY data_pagto DESC LIMIT 1) AS ultimo_pagto
-    FROM ativos a WHERE a.ativo = 1
-  `).all();
+  try {
+    const db = req.db;
+    const hoje = (req.query.hoje && isoDateDash(req.query.hoje))
+      ? req.query.hoje
+      : new Date().toISOString().slice(0, 10);
 
-  const detalhes = [];
-  let totalMensal = 0, totalAnual = 0;
-  rows.forEach(r => {
-    const qtd = Number(r.qtd || 0);
-    const divMes = Number(r.ultimo_dividendo || 0);
-    if (qtd > 0 && divMes > 0) {
-      const mensal = qtd * divMes;
-      const anual = mensal * 12;
-      const dyAnual = r.preco_atual > 0 ? (anual / (qtd * r.preco_atual) * 100) : 0;
-      detalhes.push({
-        ticker: r.ticker, tipo: r.tipo, segmento: r.segmento,
-        qtd, ultimo_dividendo: divMes, ultimo_pagto: r.ultimo_pagto,
-        preco_atual: r.preco_atual,
-        mensal, anual, dy_anual: dyAnual
-      });
-      totalMensal += mensal;
-      totalAnual += anual;
-    }
-  });
-  detalhes.sort((a, b) => b.mensal - a.mensal);
-  res.json({
-    total_mensal: totalMensal,
-    total_anual: totalAnual,
-    dy_carteira: (totalAnual / 1), // simplificado; o cálculo real precisa do patrimônio
-    detalhes
-  });
+    // Ativos com posição aberta + cotação atual
+    const ativos = db.prepare(`
+      SELECT a.id, a.ticker, a.tipo,
+             (SELECT preco FROM cotacoes WHERE ativo_id = a.id ORDER BY data DESC LIMIT 1) AS preco_atual,
+             (SELECT SUM(CASE WHEN tipo='COMPRA' THEN quantidade ELSE -quantidade END)
+              FROM lancamentos WHERE ativo_id = a.id) AS qtd
+      FROM ativos a WHERE a.ativo = 1
+    `).all();
+    const ativosForProj = ativos
+      .map(a => ({ ticker: a.ticker, qtd: Number(a.qtd || 0), preco_atual: Number(a.preco_atual || 0) }))
+      .filter(a => a.qtd > 0);
+
+    // Histórico de proventos últimos 24 meses + futuras explícitas
+    const provsRows = db.prepare(`
+      SELECT p.ativo_id, a.ticker, p.data_com, p.data_pagto, p.valor_por_cota, p.tipo
+      FROM proventos p JOIN ativos a ON a.id = p.ativo_id
+      WHERE p.data_pagto >= date(?, '-24 months')
+    `).all(hoje);
+
+    const provsForProj = provsRows.map(p => ({
+      ticker: p.ticker,
+      data_com: p.data_com,
+      data_pagto: p.data_pagto,
+      valor_por_cota: Number(p.valor_por_cota),
+      tipo: p.tipo
+    }));
+
+    const result = calcularProjecao(provsForProj, ativosForProj, { hoje, lookaheadMonths: 12 });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'erro de cálculo' });
+  }
 });
 
 // Evolução patrimonial (soma das cotações × qtd por mês)
@@ -204,11 +298,12 @@ router.get('/alertas', (req, res) => {
     if (pct > concLimite) {
       alertas.push({ tipo: 'CONCENTRACAO', ticker: p.ticker, msg: `${p.ticker} está ${pct.toFixed(1)}% da carteira (alvo ${p.alvo_pct_carteira||'—'}%)`, valor: pct });
     }
-    // Alerta de DY mensal/12M
+    // Alerta de DY mensal/12M — RF-019: só DIVIDENDO+RENDIMENTO entram no DY distribuível.
     const ult12m = db.prepare(`
       SELECT COALESCE(SUM(valor_por_cota), 0) AS total
       FROM proventos WHERE ativo_id = ?
       AND date(data_pagto) >= date('now', '-12 months')
+      AND tipo IN ('DIVIDENDO','RENDIMENTO')
     `).get(p.id);
     const dy12m = p.preco_atual > 0 ? (Number(ult12m.total) / p.preco_atual * 100) : 0;
     if (dy12m > dyLimite) {
