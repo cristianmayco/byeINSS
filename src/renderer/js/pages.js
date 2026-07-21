@@ -621,6 +621,15 @@ window.delLancamento = async function(id) {
 // (texto + cor + role=status), projeção distribuível separada de
 // amortizações futuras explícitas.
 async function renderProventos(el, params) {
+  // PRD 03: helpers de proventos-ui.js ficam em window.ProventosUI
+  // (carregado via <script> regular, sem export ESM). Desempacotamos
+  // localmente para o resto da função poder chamá-los bare.
+  const _pui = (typeof window !== 'undefined' && window.ProventosUI) || {};
+  const renderFiltroTipos = _pui.renderFiltroTipos || (() => '');
+  const badgeTipo = _pui.badgeTipo || (() => '');
+  const emptyStateProventos = _pui.emptyStateProventos || (() => '');
+  const buildChartStackedDataset = _pui.buildChartStackedDataset || (() => ({ labels: [], datasets: [] }));
+  const renderLinhasBatch = _pui.renderLinhasBatch || (() => '');
   // 1) Ler filtros do hash (RF-013) — params.tipos já vem do router se houver.
   const tiposAtivos = (params && params.tipos)
     ? new Set(String(params.tipos).split(',').map(s => s.toUpperCase()))
@@ -768,6 +777,10 @@ async function renderProventos(el, params) {
   `;
 
   // 5) Bind nos botões de filtro (RF-012).
+  // Importante: usar location.hash em vez de navigate() direto, porque
+  // navigate() não atualiza location.hash e o usuário esperaria ver a
+  // URL refletir o filtro atual (PRD 03 RF-013). Setar hash dispara o
+  // listener 'hashchange' em app.js que re-renderiza.
   el.querySelectorAll('.btn-filtro-tipo[data-tipo]').forEach(b => {
     b.addEventListener('click', (ev) => {
       ev.preventDefault();
@@ -782,7 +795,13 @@ async function renderProventos(el, params) {
         const n = new Set(tiposAtivos); n.add(t);
         qs = serializarTiposParaHash(n);
       }
-      navigate('#proventos' + qs);
+      const targetHash = '#proventos' + qs;
+      if (location.hash !== targetHash) {
+        location.hash = targetHash;
+      } else {
+        // Já estamos nessa URL — re-renderiza explicitamente.
+        navigate(targetHash);
+      }
     });
   });
 

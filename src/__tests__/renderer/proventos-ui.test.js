@@ -175,3 +175,35 @@ describe('renderLinhasBatch — RF-010 modal em lote com parcelas', () => {
     expect(html).toContain('EVIL&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;');
   });
 });
+
+describe('ProventosUI — exposição global window.ProventosUI (fix Playwright #2)', () => {
+  it('executado como <script> regular define window.ProventosUI', async () => {
+    // Reproduz exatamente o que acontece quando o renderer carrega
+    // <script src="js/proventos-ui.js">: nenhum export ESM, mas o
+    // IIFE deve anexar a API em window.ProventosUI.
+    const fs = await import('fs');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const code = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'renderer', 'js', 'proventos-ui.js'),
+      'utf8'
+    );
+    const scriptEl = document.createElement('script');
+    scriptEl.textContent = code;
+    document.head.appendChild(scriptEl);
+
+    expect(window.ProventosUI).toBeDefined();
+    expect(typeof window.ProventosUI.renderFiltroTipos).toBe('function');
+    expect(typeof window.ProventosUI.badgeTipo).toBe('function');
+    expect(typeof window.ProventosUI.buildChartStackedDataset).toBe('function');
+    expect(typeof window.ProventosUI.renderLinhasBatch).toBe('function');
+    expect(typeof window.ProventosUI.escapeHtml).toBe('function');
+
+    // Funciona end-to-end: usado do jeito que pages.js faz
+    const filtros = window.ProventosUI.renderFiltroTipos(new Set(['AMORTIZACAO']));
+    expect(filtros).toContain('data-tipo="AMORTIZACAO"');
+    expect(filtros).toMatch(/aria-pressed="true"/);
+  });
+});
