@@ -46,10 +46,20 @@
       return { page: path, nav: path, params };
     }
 
-    // PRD 02 sub-PR 4 (RF-019/RF-022): #posicoes?filtro=ATENCAO,CRITICO
-    // é uma rota estática com query string, não um caminho dinâmico.
-    // Mantido como atalho para compat — `staticRoutes.has(path)` já cobre.
-    // PRD 03: #proventos?tipos=AMORTIZACAO — atendido pela query parsing acima.
+    // PRD 01: #fii-historico/[A-Z]{4}11 — rota dedicada ao histórico de
+    // dividendos. Verificada ANTES do split('/') para não cair no fallback
+    // do fii-detail. Pattern aceita 1-2 dígitos no final (ex.: HGLG11, XPML11).
+    const histMatch = raw.match(/^fii-historico\/([A-Z]{4}\d{1,2})(\?.*)?$/);
+    if (histMatch) {
+      const decodedTicker = histMatch[1].toUpperCase();
+      if (normalizeFiiTicker(decodedTicker)) {
+        return {
+          page: 'fii-historico',
+          nav: 'posicoes',
+          params: { ...params, ticker: decodedTicker }
+        };
+      }
+    }
 
     const parts = path.split('/');
     if (parts.length !== 2 || parts[0] !== 'fii') {

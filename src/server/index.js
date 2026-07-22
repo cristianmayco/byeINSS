@@ -46,6 +46,9 @@ async function startServer() {
   app.use('/api/fiis/scraper/contratos', scraperContratosRouter);  // PRD 12 sub-PR 3: resync
   app.use('/api', indicadoresRouter);                          // PRD 02: /fiis/indicadores + /:ticker
   app.use('/api/fiis/scraper/indicadores', scraperIndicadoresRouter);  // PRD 02 sub-PR 3: resync
+  // PRD 01: Histórico de dividendos
+  const fiiHistoricoRouter = require('./routes/fii-historico.js');
+  app.use('/api/fii-historico', fiiHistoricoRouter);
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
