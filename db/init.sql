@@ -77,16 +77,59 @@ CREATE TABLE IF NOT EXISTS proventos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ativo_id INTEGER NOT NULL,
   data_com TEXT,              -- data-com (direito)
-  data_pagto TEXT NOT NULL,   -- data pagamento
+  data_pagto TEXT,            -- Migration 1.5: nullable (permite MES-only = 'YYYY-MM' da fonte)
   valor_por_cota REAL NOT NULL,
   -- Migration 1.4: AMORTIZACAO adicionado (PRD 03).
   -- Tipos: DIVIDENDO | RENDIMENTO | BONIFICACAO | AMORTIZACAO.
   tipo TEXT NOT NULL DEFAULT 'DIVIDENDO'
     CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')),
+  -- Migration 1.5: Histórico de Dividendos (PRD 01). Competência YYYY-MM
+  -- sempre presente; data_pagto pode ser nula quando precisao_data='MES'
+  -- (fonte fornece só mês/ano). Defaults não-DEFAULT não forçam retrocompat
+  -- porque registros legados vão ser normalizados no `up()`.
+  competencia TEXT NOT NULL DEFAULT '0000-00',
+  precisao_data TEXT NOT NULL DEFAULT 'DIA'
+    CHECK (precisao_data IN ('DIA','MES')),
+  status TEXT NOT NULL DEFAULT 'PAGO'
+    CHECK (status IN ('PAGO','AGENDADO')),
+  fonte TEXT NOT NULL DEFAULT 'MANUAL'
+    CHECK (fonte IN ('MANUAL','INVESTIDOR10','IMPORTACAO','LEGADO')),
+  origem_chave TEXT,           -- dedup quando fonte='INVESTIDOR10'
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (ativo_id) REFERENCES ativos(id)
 );
 CREATE INDEX IF NOT EXISTS idx_proventos_ativo_data ON proventos(ativo_id, data_pagto DESC);
 CREATE INDEX IF NOT EXISTS idx_proventos_tipo_data ON proventos(tipo, data_pagto DESC);
+-- Migration 1.5
+CREATE INDEX IF NOT EXISTS idx_proventos_ativo_competencia
+  ON proventos(ativo_id, status, competencia DESC);
+CREATE INDEX IF NOT EXISTS idx_proventos_status_pagto
+  ON proventos(status, data_pagto DESC);
+CREATE INDEX IF NOT EXISTS idx_proventos_tipo_competencia
+  ON proventos(tipo, competencia DESC);
+
+-- Migration 1.5: provenance da sincronização por FII (PRD 01).
+CREATE TABLE IF NOT EXISTS fii_dividendos_sync (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ativo_id INTEGER NOT NULL,
+  ultimo_status TEXT NOT NULL CHECK (ultimo_status IN
+    ('NUNCA','EM_ANDAMENTO','SUCESSO','PARCIAL','ERRO','CANCELADO')),
+  ultimo_ts TEXT,
+  ultimo_total_lido INTEGER,
+  ultimo_inseridos INTEGER,
+  ultimo_atualizados INTEGER,
+  ultimo_duplicados INTEGER,
+  ultimo_conflitos INTEGER,
+  primeira_competencia TEXT,    -- 'YYYY-MM'
+  ultima_competencia TEXT,      -- 'YYYY-MM'
+  cobertura_completa INTEGER DEFAULT 0 CHECK (cobertura_completa IN (0,1)),
+  erro TEXT,
+  FOREIGN KEY (ativo_id) REFERENCES ativos(id),
+  UNIQUE (ativo_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fii_divsync_ts
+  ON fii_dividendos_sync(ultimo_ts DESC);
 
 CREATE TABLE IF NOT EXISTS metas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,8 +201,8 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('alerta_concentracao_pct', '10.0'),
   ('dy_minimo_global', '8.0'),
   ('moeda', 'BRL'),
-  -- Migration 1.2/1.3 → 1.4: schema versionada (atualizada no INSERT OR REPLACE abaixo)
-  ('versao_schema', '1.4'),
+  -- Migration 1.4/1.5: schema versionada (atualizada no INSERT OR REPLACE abaixo)
+  ('versao_schema', '1.5'),
   -- Thresholds de preço (em % do preço-teto)
   ('pct_muito_barato', '85.0'),   -- até 85% do preço-teto = muito barato
   ('pct_barato', '100.0'),         -- até 100% = no teto

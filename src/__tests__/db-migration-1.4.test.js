@@ -122,7 +122,7 @@ describe('migration 1.4 — PRD 03: AMORTIZACAO em proventos', () => {
     const sql = fs.readFileSync(INIT_SQL_PATH, 'utf8');
     db.exec(sql);
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.4');
+    expect(v.valor).toBe('1.5');
     // Verifica que o CHECK constraint existe
     const checkRows = db.prepare(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='proventos'"
@@ -270,13 +270,15 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     const runMigrations = await loadRunMigrations();
     expect(() => runMigrations(db)).not.toThrow();
 
-    // Bump de versão
+    // Bump de versão — agora termina em 1.5 (PRD 01 veio depois)
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.4');
+    expect(v.valor).toBe('1.5');
 
-    // Schema_migrations recebeu 1.4
-    const reg = db.prepare("SELECT version FROM schema_migrations WHERE version='1.4'").get();
-    expect(reg).toBeDefined();
+    // Schema_migrations recebeu 1.4 e 1.5
+    const reg14 = db.prepare("SELECT version FROM schema_migrations WHERE version='1.4'").get();
+    expect(reg14).toBeDefined();
+    const reg15 = db.prepare("SELECT version FROM schema_migrations WHERE version='1.5'").get();
+    expect(reg15).toBeDefined();
 
     // Dados preservados: 3 proventos mantidos, NULL virou 'DIVIDENDO'
     const rows = db.prepare("SELECT id, tipo, valor_por_cota FROM proventos ORDER BY id").all();
@@ -318,7 +320,7 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     runMigrations(db);  // 2x: deve ser no-op
 
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.4');
+    expect(v.valor).toBe('1.5');
     // Índice criado exatamente 1x
     const idxCount = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='index' AND name='idx_proventos_tipo_data'").get();
     expect(idxCount.c).toBe(1);
@@ -342,6 +344,6 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     const runMigrations = await loadRunMigrations();
     expect(() => runMigrations(db)).not.toThrow();
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.4');
+    expect(v.valor).toBe('1.5');
   });
 });

@@ -39,11 +39,11 @@ describe('schema_migrations framework', () => {
     ]));
   });
 
-  it('init.sql finaliza com versao_schema = 1.4 (pós PRD 03)', () => {
+  it('init.sql finaliza com versao_schema = 1.5 (pós PRD 01)', () => {
     const db = freshDb();
     applyInit(db);
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.4');
+    expect(v.valor).toBe('1.5');
   });
 
   it('init.sql cria coluna vencimento_medio_contratos em ativos', () => {
