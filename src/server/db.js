@@ -232,7 +232,7 @@ const FALLBACK_SCHEMA_INLINE = `
   CREATE INDEX IF NOT EXISTS idx_ativos_alerta_venc ON ativos(alerta_vencimento) WHERE alerta_vencimento = 1;
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('vencimento_janela_alerta_meses', '24');
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('indicador_dy_vs_5a_abaixo_pct', '95');
-  INSERT OR IGNORE INTO config (chave, valor) VALUES ('versao_schema', '1.5');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('versao_schema', '1.6');
 `;
 
 /**
@@ -576,6 +576,121 @@ const MIGRATIONS = [
         throw new Error(
           `[migration 1.5] fii_dividendos_sync tem duplicatas: ${JSON.stringify(dupSync)}`
         );
+      }
+    }
+  },
+  {
+    // PRD 01 follow-up (M1 fix): data_pagto nullable em DBs legacy.
+    // Schema 1.5 → 1.6. Recria `proventos` via padrão proventos_v2 +
+    // INSERT + DROP + RENAME para tornar data_pagto nullable (init.sql
+    // já declara nullable; M1 era dívida técnica do ALTER ADD COLUMN).
+    version: '1.6',
+    description: 'PRD 01 follow-up: data_pagto TEXT (nullable) em proventos — M1 fix',
+    up(db) {
+      // 1. Defesa: schema_migrations presente
+      const hasSchema = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
+        .get();
+      if (!hasSchema) {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+            duration_ms INTEGER,
+            rows_before INTEGER,
+            rows_after INTEGER,
+            reversible INTEGER NOT NULL DEFAULT 1
+          );
+          CREATE INDEX IF NOT EXISTS idx_schema_migrations_applied
+            ON schema_migrations(applied_at DESC);
+        `);
+      }
+
+      const hasProventos = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='proventos'")
+        .get();
+      if (!hasProventos) return;  // init.sql criará do zero
+
+      // 2. Se já está nullable, nada a fazer (idempotência).
+      const isNullable = db.prepare(
+        "SELECT \"notnull\" FROM pragma_table_info('proventos') WHERE name='data_pagto'"
+      ).get();
+      if (isNullable && isNullable.notnull === 0) {
+        return;  // já é nullable
+      }
+
+      // 3. Captura checksums de validação (PRD 03 Passo 6).
+      const rowsBefore = db.prepare('SELECT COUNT(*) AS c FROM proventos').get().c;
+      const idsBefore = db.prepare('SELECT COALESCE(SUM(id), 0) AS s FROM proventos').get().s;
+      const ativosBefore = db.prepare('SELECT COALESCE(SUM(ativo_id), 0) AS s FROM proventos').get().s;
+      const valoresBefore = db.prepare('SELECT COALESCE(SUM(valor_por_cota), 0) AS s FROM proventos').get().s;
+
+      // 4. Recriar proventos (PRAGMA foreign_keys=OFF é no-op dentro de tx,
+      // mas ainda assim documentado — não pode quebrar).
+      db.exec(`
+        DROP TABLE IF EXISTS proventos_v2;
+        CREATE TABLE proventos_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ativo_id INTEGER NOT NULL,
+          data_com TEXT,
+          data_pagto TEXT,
+          valor_por_cota REAL NOT NULL,
+          tipo TEXT NOT NULL DEFAULT 'DIVIDENDO'
+            CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')),
+          competencia TEXT NOT NULL DEFAULT '0000-00',
+          precisao_data TEXT NOT NULL DEFAULT 'DIA' CHECK (precisao_data IN ('DIA','MES')),
+          status TEXT NOT NULL DEFAULT 'PAGO' CHECK (status IN ('PAGO','AGENDADO')),
+          fonte TEXT NOT NULL DEFAULT 'MANUAL' CHECK (fonte IN ('MANUAL','INVESTIDOR10','IMPORTACAO','LEGADO')),
+          origem_chave TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (ativo_id) REFERENCES ativos(id)
+        );
+        INSERT INTO proventos_v2
+          (id, ativo_id, data_com, data_pagto, valor_por_cota, tipo, competencia,
+           precisao_data, status, fonte, origem_chave, created_at, updated_at)
+        SELECT id, ativo_id, data_com,
+               -- data_pagto legado (NOT NULL) passa direto; novos com NULL
+               -- são aceitos pela nova tabela.
+               data_pagto,
+               valor_por_cota, tipo, competencia,
+               precisao_data, status, fonte, origem_chave,
+               -- registros legados vinham com created_at/updated_at='';
+               -- preenchemos com datetime('now') para alinhar com init.sql.
+               CASE WHEN created_at = '' THEN datetime('now') ELSE created_at END,
+               CASE WHEN updated_at = '' THEN datetime('now') ELSE updated_at END
+        FROM proventos;
+        DROP TABLE proventos;
+        ALTER TABLE proventos_v2 RENAME TO proventos;
+        CREATE INDEX IF NOT EXISTS idx_proventos_ativo_data ON proventos(ativo_id, data_pagto DESC);
+        CREATE INDEX IF NOT EXISTS idx_proventos_tipo_data ON proventos(tipo, data_pagto DESC);
+        CREATE INDEX IF NOT EXISTS idx_proventos_ativo_competencia ON proventos(ativo_id, status, competencia DESC);
+        CREATE INDEX IF NOT EXISTS idx_proventos_status_pagto ON proventos(status, data_pagto DESC);
+        CREATE INDEX IF NOT EXISTS idx_proventos_tipo_competencia ON proventos(tipo, competencia DESC);
+      `);
+
+      // 5. Validações pós-migration (PRD 03 Passo 6).
+      const rowsAfter = db.prepare('SELECT COUNT(*) AS c FROM proventos').get().c;
+      const idsAfter = db.prepare('SELECT COALESCE(SUM(id), 0) AS s FROM proventos').get().s;
+      const ativosAfter = db.prepare('SELECT COALESCE(SUM(ativo_id), 0) AS s FROM proventos').get().s;
+      const valoresAfter = db.prepare('SELECT COALESCE(SUM(valor_por_cota), 0) AS s FROM proventos').get().s;
+      if (rowsAfter !== rowsBefore || idsAfter !== idsBefore ||
+          ativosAfter !== ativosBefore ||
+          Math.abs(valoresAfter - valoresBefore) > 0.000001) {
+        throw new Error(
+          `[migration 1.6] Validação falhou — rows(${rowsBefore}→${rowsAfter}) ` +
+          `ids(${idsBefore}→${idsAfter}) ativos(${ativosBefore}→${ativosAfter}) ` +
+          `valores(${valoresBefore}→${valoresAfter})`
+        );
+      }
+      const fkViolations = db.prepare('PRAGMA foreign_key_check(proventos)').all();
+      if (fkViolations.length) {
+        throw new Error(`[migration 1.6] FK check falhou: ${JSON.stringify(fkViolations)}`);
+      }
+      const integrity = db.prepare('PRAGMA integrity_check').get();
+      if (integrity.integrity_check !== 'ok') {
+        throw new Error(`[migration 1.6] integrity_check falhou: ${integrity.integrity_check}`);
       }
     }
   }

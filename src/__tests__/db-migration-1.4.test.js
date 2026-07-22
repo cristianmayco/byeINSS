@@ -116,13 +116,15 @@ function applyMigration1_4(db) {
 }
 
 describe('migration 1.4 — PRD 03: AMORTIZACAO em proventos', () => {
-  it('init.sql finaliza com versao_schema = 1.4 após o bump do PRD 03', () => {
-    // Após aplicar PRD 03 num banco novo, init.sql deve declarar 1.4 e ter CHECK constraint
+  it('init.sql finaliza com versao_schema = 1.6 (PRD 03 + PRD 01 + follow-up)', () => {
+    // Após aplicar PRD 03 + PRD 01 + follow-up num banco novo, init.sql
+    // deve declarar 1.6 e ter CHECK constraint.
     const db = freshDb();
     const sql = fs.readFileSync(INIT_SQL_PATH, 'utf8');
     db.exec(sql);
+    // Schema 1.6 inclui 1.4 + 1.5 + 1.6 (PRD 03 + PRD 01 + PRD 01 follow-up)
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.5');
+    expect(v.valor).toBe('1.6');
     // Verifica que o CHECK constraint existe
     const checkRows = db.prepare(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='proventos'"
@@ -270,15 +272,17 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     const runMigrations = await loadRunMigrations();
     expect(() => runMigrations(db)).not.toThrow();
 
-    // Bump de versão — agora termina em 1.5 (PRD 01 veio depois)
+    // Bump de versão — agora termina em 1.6 (PRD 03 + PRD 01 + PRD 01 follow-up)
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.5');
+    expect(v.valor).toBe('1.6');
 
-    // Schema_migrations recebeu 1.4 e 1.5
+    // Schema_migrations recebeu 1.4, 1.5 e 1.6
     const reg14 = db.prepare("SELECT version FROM schema_migrations WHERE version='1.4'").get();
     expect(reg14).toBeDefined();
     const reg15 = db.prepare("SELECT version FROM schema_migrations WHERE version='1.5'").get();
     expect(reg15).toBeDefined();
+    const reg16 = db.prepare("SELECT version FROM schema_migrations WHERE version='1.6'").get();
+    expect(reg16).toBeDefined();
 
     // Dados preservados: 3 proventos mantidos, NULL virou 'DIVIDENDO'
     const rows = db.prepare("SELECT id, tipo, valor_por_cota FROM proventos ORDER BY id").all();
@@ -320,7 +324,7 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     runMigrations(db);  // 2x: deve ser no-op
 
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.5');
+    expect(v.valor).toBe('1.6');
     // Índice criado exatamente 1x
     const idxCount = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='index' AND name='idx_proventos_tipo_data'").get();
     expect(idxCount.c).toBe(1);
@@ -344,6 +348,6 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     const runMigrations = await loadRunMigrations();
     expect(() => runMigrations(db)).not.toThrow();
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.5');
+    expect(v.valor).toBe('1.6');
   });
 });

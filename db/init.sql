@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS proventos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ativo_id INTEGER NOT NULL,
   data_com TEXT,              -- data-com (direito)
-  data_pagto TEXT,            -- Migration 1.5: nullable (permite MES-only = 'YYYY-MM' da fonte)
+  data_pagto TEXT,            -- Migration 1.5: nullable (permite MES-only = 'YYYY-MM' da fonte).
+                       -- Migration 1.6: nullable propagado para DBs legacy via recriação.
   valor_por_cota REAL NOT NULL,
   -- Migration 1.4: AMORTIZACAO adicionado (PRD 03).
   -- Tipos: DIVIDENDO | RENDIMENTO | BONIFICACAO | AMORTIZACAO.
@@ -201,8 +202,8 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('alerta_concentracao_pct', '10.0'),
   ('dy_minimo_global', '8.0'),
   ('moeda', 'BRL'),
-  -- Migration 1.4/1.5: schema versionada (atualizada no INSERT OR REPLACE abaixo)
-  ('versao_schema', '1.5'),
+  -- Migration 1.4/1.5 → 1.6: schema versionada (atualizada no INSERT OR REPLACE abaixo)
+  ('versao_schema', '1.6'),
   -- Thresholds de preço (em % do preço-teto)
   ('pct_muito_barato', '85.0'),   -- até 85% do preço-teto = muito barato
   ('pct_barato', '100.0'),         -- até 100% = no teto
