@@ -241,3 +241,46 @@ describe('resumirCadencia — RF-018', () => {
     expect(r.cadencia).toBe('REGULAR');
   });
 });
+
+describe('dividendos-hist — integração CJS (regressão do bug Playwright PRD 03)', () => {
+  // Garante que require() real (não via vitest) também funciona —
+  // porque rotas Express usam CJS, e ESM `export` quebra em CJS.
+  it('require() real do módulo retorna as 4 funções', async () => {
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    // Create a separate CJS file dynamically to avoid the ESM boundary
+    // Confirms via dynamic import → module namespace (vitest default)
+    const mod = await import('../shared/dividendos-hist.js');
+    expect(typeof mod.calcularDYRealizado12M).toBe('function');
+    expect(typeof mod.calcularDYSustentavel).toBe('function');
+    expect(typeof mod.classificarSinais).toBe('function');
+    expect(typeof mod.resumirCadencia).toBe('function');
+  });
+
+  it('round-trip via require CJS real (não vitest)', () => {
+    // require() é CJS puro — se dividendos-hist.js tiver `export`,
+    // isso quebra. Foi o bug do Playwright PRD 03 em proventos-ui.
+    // Como vitest intercepta require, testamos via Node direto.
+    const fs = require('fs');
+    const path = require('path');
+    const Module = require('module');
+    const file = path.join(__dirname, '..', 'shared', 'dividendos-hist.js');
+    const mod = new Module(file);
+    mod.filename = file;
+    mod.paths = Module._nodeModulePaths(path.dirname(file));
+    mod._compile(fs.readFileSync(file, 'utf8'), file);
+    expect(typeof mod.exports.calcularDYRealizado12M).toBe('function');
+    expect(typeof mod.exports.calcularDYSustentavel).toBe('function');
+    expect(typeof mod.exports.classificarSinais).toBe('function');
+    expect(typeof mod.exports.resumirCadencia).toBe('function');
+    // Spot-check: função funciona quando chamada via CJS
+    const r = mod.exports.calcularDYRealizado12M({
+      proventos: [{ competencia: '2025-08', valor_por_cota: 0.80, tipo: 'DIVIDENDO', status: 'PAGO' }],
+      cotacao: 10, hoje: '2026-07-21', janelaMeses: 12
+    });
+    expect(r.dy_pct).toBeNull();  // cobertura insuficiente
+    expect(r.indisponivel_motivo).toMatch(/cobertura/i);
+  });
+});

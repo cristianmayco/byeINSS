@@ -54,7 +54,7 @@ function distribuiveis(proventos) {
  *   indisponivel_motivo: string|null
  * }}
  */
-export function calcularDYRealizado12M(opts) {
+function calcularDYRealizado12M(opts) {
   const { proventos, cotacao, hoje } = opts;
   const janela = opts.janelaMeses || 12;
   const refYM = hojeYM(hoje);
@@ -105,7 +105,7 @@ export function calcularDYRealizado12M(opts) {
  * DY sustentável estimado (RF-013) + confiança (RF-014).
  * @param {{proventos: Array, cotacao: number, hoje: string, sincronizacaoDias?: number}} opts
  */
-export function calcularDYSustentavel(opts) {
+function calcularDYSustentavel(opts) {
   const { proventos, cotacao, hoje } = opts;
   const sincDias = opts.sincronizacaoDias != null ? opts.sincronizacaoDias : 0;
   const refYM = hojeYM(hoje);
@@ -179,7 +179,7 @@ export function calcularDYSustentavel(opts) {
  * @param {{serieRecente: Array<{competencia:string, valor:number}>,
  *         baseAnterior?: number, limitePct?: number}} opts
  */
-export function classificarSinais(opts) {
+function classificarSinais(opts) {
   const serie = (opts.serieRecente || []).slice()
     .sort((a, b) => a.competencia.localeCompare(b.competencia));
   const limite = opts.limitePct != null ? opts.limitePct : 15;
@@ -220,7 +220,7 @@ export function classificarSinais(opts) {
  * Resumo de cadência dos últimos 12 meses (RF-018).
  * REGULAR >= 9 meses pagantes, IRREGULAR < 9.
  */
-export function resumirCadencia(opts) {
+function resumirCadencia(opts) {
   const { proventos, hoje } = opts;
   const refYM = hojeYM(hoje);
   const ref = parseYM(refYM);
