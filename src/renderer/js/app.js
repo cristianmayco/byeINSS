@@ -58,7 +58,8 @@ const routes = {
   cenarios: renderCenarios,
   importar: renderImportar,
   config: renderConfig,
-  'fii-detail': renderFiiDetail
+  'fii-detail': renderFiiDetail,
+  'fii-historico': typeof renderFiiHistorico === 'function' ? renderFiiHistorico : renderFiiDetail
 };
 
 let chartsToDestroy = [];

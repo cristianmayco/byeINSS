@@ -523,4 +523,42 @@ async function extractAgendaDividendos(opts = {}) {
   };
 }
 
-module.exports = { openScraper, checkReady, extractInvestidor10, extractAndImport, closeScraper, setDbGetter, extractFIIDetalhes, extractAllFIIDetalhes, extractAgendaDividendos };
+// PRD 01: extrai o histórico completo de dividendos do FII corrente na
+// janela do scraper. Carrega a página /fiis/{ticker}/, localiza a tabela
+// de histórico, parseia via src/main/scraper-historico.js (carregado em
+// runtime, igual ao padrão do extractAgendaDividendos que usa
+// agenda-parser.js).
+async function extractHistoricoDividendos(ticker) {
+  if (!scraperWindow || scraperWindow.isDestroyed()) {
+    throw new Error('Janela do scraper não está aberta');
+  }
+  await scraperWindow.webContents.executeJavaScript(`
+    new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const table = document.querySelector('table');
+        if (table && table.querySelectorAll('thead th').length >= 2) return resolve(true);
+        if (Date.now() - t0 > 15000) return reject(new Error('Timeout'));
+        setTimeout(tick, 200);
+      };
+      tick();
+    });
+  `);
+  const HISTORICO_PARSER_SRC = fs.readFileSync(
+    path.join(__dirname, 'scraper-historico.js'),
+    'utf8'
+  );
+  const rows = await scraperWindow.webContents.executeJavaScript(`
+    (() => {
+      ${HISTORICO_PARSER_SRC};
+      return ScraperHistorico.extractHistoricoFromDocument(document, ${JSON.stringify(ticker)});
+    })()
+  `);
+  return Array.isArray(rows) ? rows : [];
+}
+
+module.exports = {
+  openScraper, checkReady, extractInvestidor10, extractAndImport, closeScraper,
+  setDbGetter, extractFIIDetalhes, extractAllFIIDetalhes, extractAgendaDividendos,
+  extractHistoricoDividendos
+};

@@ -1571,6 +1571,8 @@ async function renderFiiHistorico(el, { ticker } = {}) {
 
   const loading = document.createElement('div');
   loading.className = 'empty-state';
+  loading.setAttribute('role', 'status');
+  loading.setAttribute('aria-live', 'polite');
   loading.textContent = 'Carregando histórico...';
   el.appendChild(loading);
 
@@ -1641,10 +1643,16 @@ async function renderFiiHistorico(el, { ticker } = {}) {
         : r.estado_atual === 'AUMENTO_CONFIRMADO' ? '#86efac'
         : r.estado_atual === 'EM_OBSERVACAO' ? '#fdba74'
         : '#94a3b8';
+    // Prefixo textual garante que o estado é diferenciável mesmo sem cor
+    // (regra a11y do projeto: cor nunca é único diferenciador).
+    const prefixo = r.estado_atual === 'CORTE_CONFIRMADO' ? '↓'
+      : r.estado_atual === 'AUMENTO_CONFIRMADO' ? '↑'
+      : r.estado_atual === 'EM_OBSERVACAO' ? '?' : '·';
       badge.innerHTML = `
         <div class="card-title">Estado atual dos sinais</div>
         <p style="margin:8px 0;">
-          <span style="background:${cor};color:#0f172a;padding:4px 10px;border-radius:4px;font-weight:600;">
+          <span role="status" aria-label="${escapeHtml(r.estado_atual)} ${escapeHtml(r.direcao_atual || '')}" style="background:${cor};color:#0f172a;padding:4px 10px;border-radius:4px;font-weight:600;">
+            <span aria-hidden="true">${escapeHtml(prefixo)}</span>
             ${escapeHtml(r.estado_atual)} ${r.direcao_atual ? '(' + escapeHtml(r.direcao_atual) + ')' : ''}
           </span>
         </p>
@@ -1659,6 +1667,33 @@ async function renderFiiHistorico(el, { ticker } = {}) {
     tableTitle.className = 'card-title';
     tableTitle.textContent = `Histórico (${r.total_registros} registros)`;
     tableCard.appendChild(tableTitle);
+
+    // Filtro por tipo (RF-022 — filtrar por tipo na tabela)
+    let filtroAtual = '';
+    const filterBar = document.createElement('div');
+    filterBar.style.margin = '6px 0';
+    filterBar.style.display = 'flex';
+    filterBar.style.gap = '6px';
+    filterBar.style.flexWrap = 'wrap';
+    const tipos = ['', 'DIVIDENDO', 'RENDIMENTO', 'AMORTIZACAO', 'BONIFICACAO'];
+    tipos.forEach(t => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = t ? t : 'Todos';
+      btn.dataset.tipoFiltro = t;
+      btn.setAttribute('aria-pressed', t === filtroAtual ? 'true' : 'false');
+      btn.style.cssText = 'background:transparent;border:1px solid #334155;color:#94a3b8;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;';
+      btn.onclick = () => {
+        filtroAtual = t;
+        filterBar.querySelectorAll('button').forEach(b =>
+          b.setAttribute('aria-pressed', b.dataset.tipoFiltro === filtroAtual ? 'true' : 'false')
+        );
+        renderTable(t);
+      };
+      filterBar.appendChild(btn);
+    });
+    tableCard.appendChild(filterBar);
+
     const tableWrap = document.createElement('div');
     tableWrap.className = 'table-wrap';
     const table = document.createElement('table');
@@ -1667,23 +1702,32 @@ async function renderFiiHistorico(el, { ticker } = {}) {
       <tbody></tbody>
     `;
     const tbody = table.querySelector('tbody');
-    for (const h of (r.historico || [])) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${escapeHtml(h.competencia || '—')}</td>
-        <td>${escapeHtml(h.data_pagto || '—')}</td>
-        <td>${brl(h.valor_por_cota)}</td>
-        <td>${h.quantidade_elegivel || 0}</td>
-        <td>${brl(h.valor_total || 0)}</td>
-        <td>${escapeHtml(h.tipo || '—')}${h.status === 'AGENDADO' ? ' <small class="muted">(agendado)</small>' : ''}</td>
-      `;
-      tbody.appendChild(tr);
-    }
-    if (!r.historico || r.historico.length === 0) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="6" class="empty-state">Sem histórico registrado.</td>`;
-      tbody.appendChild(tr);
-    }
+
+    const renderTable = (filtroTipo) => {
+      tbody.innerHTML = '';
+      const visiveis = (r.historico || []).filter(h => !filtroTipo || h.tipo === filtroTipo);
+      for (const h of visiveis) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${escapeHtml(h.competencia || '—')}</td>
+          <td>${escapeHtml(h.data_pagto || '—')}</td>
+          <td>${brl(h.valor_por_cota)}</td>
+          <td>${h.quantidade_elegivel || 0}</td>
+          <td>${brl(h.valor_total || 0)}</td>
+          <td>${escapeHtml(h.tipo || '—')}${h.status === 'AGENDADO' ? ' <small class="muted">(agendado)</small>' : ''}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+      if (visiveis.length === 0) {
+        const tr = document.createElement('tr');
+        const msg = filtroTipo
+          ? `Nenhum provento do tipo ${escapeHtml(filtroTipo)} no histórico.`
+          : 'Sem histórico registrado.';
+        tr.innerHTML = `<td colspan="6" class="empty-state">${msg}</td>`;
+        tbody.appendChild(tr);
+      }
+    };
+    renderTable('');
     tableWrap.appendChild(table);
     tableCard.appendChild(tableWrap);
     el.appendChild(tableCard);
@@ -1697,6 +1741,7 @@ async function renderFiiHistorico(el, { ticker } = {}) {
     el.innerHTML = '';
     const err = document.createElement('div');
     err.className = 'empty-state';
+    err.setAttribute('role', 'alert');
     err.textContent = `Erro ao carregar histórico: ${e.message}`;
     el.appendChild(err);
   }

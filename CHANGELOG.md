@@ -5,6 +5,48 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+### Added — PRD 01: Histórico de DividendoseSustentabilidadedeDY por FII (schema 1.5)
+
+- **Schema 1.4 → 1.5 (migration versionada)**: 7 colunas novas em `proventos`
+  via `ALTER TABLE` (competencia, precisao_data, status, fonte,
+  origem_chave, created_at, updated_at). Tabela nova
+  `fii_dividendos_sync` com provenance por FII (status ENUM
+  NUNCA/EM_ANDAMENTO/SUCESSO/PARCIAL/ERRO/CANCELADO, contadores,
+  primeira/ultima_competencia, cobertura_completa, erro). Idempotente.
+- **Lógica pura (`src/shared/dividendos-hist.js`)**: `calcularDYRealizado12M`
+  (RF-012), `calcularDYSustentavel` (RF-013) com confiança ALTA/MEDIA/
+  INDISPONIVEL (RF-014), `classificarSinais` ESTAVEL/EM_OBSERVACAO/
+  CORTE_CONFIRMADO/AUMENTO_CONFIRMADO (RF-016/017), `resumirCadencia`
+  REGULAR/IRREGULAR (RF-018).
+- **Importer (`src/shared/dividendos-import.js`)**: dedup por
+  `(fonte, origem_chave)` (RF-008), reconciliação com manuais
+  (RF-009: manual NUNCA é sobrescrito), tipo desconhecido → ignorados
+  (RF-006/011), retorna `inseridos/duplicados/ignorados/por_tipo/erros`
+  (RF-022), atualiza `fii_dividendos_sync` (RF-024).
+- **Scraper I10 (`src/main/scraper-historico.js`)**: parser por HEADER
+  semântico (RF-004), normaliza tipo e competência MM/YYYY → YYYY-MM
+  (RF-005), gera `origem_chave` determinística. Carregado via
+  `executeJavaScript` no Electron (mesmo padrão do `agenda-parser`).
+- **Endpoints**:
+  - `GET /api/fii-historico/:ticker` — histórico paginado + métricas
+    (DY realizado 12M, DY sustentável com confiança, comparação vs
+    DY 5a com classificação, sinais com estado por variação,
+    sync_status). Aceita `?pagina=&tamanhoPagina=&hoje=`.
+  - `POST /api/fii-historico/:ticker/importar` — recebe rows do
+    scraper Electron e delega para `importarHistoricoDividendos`.
+- **UI**:
+  - Nova rota `#fii-historico/[A-Z]{4}11` no router.
+  - Página dedicada com KPIs (DY realizado, DY sustentável vs DY 5a,
+    cadência), badge de estado atual dos sinais, sync status, tabela
+    paginada com filtro por tipo (RF-022).
+  - Botão "Histórico" adicionado na tabela de Posições (RF-001).
+- **IPC**:
+  - `scraper:dividendos-historico(ticker)` — scraping individual.
+  - `scraper:dividendos-historico-todos` — batch sequencial para todos
+    os FIIs da carteira, retorna resumo com sucessos/erros.
+- **Testes**: 32 novos testes cobrindo migration 1.5, lógica pura,
+  importer, scraper parser, integração HTTP da rota, router.
+
 ### Added — PRD 03: Amortizações Separadas em Proventos de FIIs (schema 1.4)
 
 - **Schema 1.4 — migration versionada**: tabela `proventos` agora aceita o

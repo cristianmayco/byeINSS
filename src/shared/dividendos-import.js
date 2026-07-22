@@ -186,15 +186,28 @@ function importarHistoricoDividendos(db, itens) {
   `);
   const totalLido = Array.isArray(itens) ? itens.length : 0;
   const conflitos = erros.filter(e => e.codigo === 'manual_existente_conflito').length;
+  // Pre-cache tickers por id uma vez (evita N+1 prepare em loop, code review)
+  const tickerPorAtivo = new Map();
   for (const [ativoId, agg] of resumoPorAtivo) {
-    const ativoErros = erros.filter(e => {
-      // Match por ticker original — simples, já que estamos em transação
-      const tk = db.prepare('SELECT ticker FROM ativos WHERE id=?').get(ativoId);
-      return erros.some(x => x.ticker === tk.ticker && x.codigo !== 'manual_existente_conflito');
-    });
+    if (!tickerPorAtivo.has(ativoId)) {
+      tickerPorAtivo.set(ativoId,
+        db.prepare('SELECT ticker FROM ativos WHERE id=?').get(ativoId));
+    }
+  }
+  for (const [ativoId, agg] of resumoPorAtivo) {
+    const tk = tickerPorAtivo.get(ativoId);
+    const ativoErros = erros.some(x => x.ticker === (tk && tk.ticker) && x.codigo !== 'manual_existente_conflito');
+    // Status: 'ERRO' só se houve exception (não erros de validação);
+    // 'PARCIAL' se houve algum item ignorado/confito; 'SUCESSO' caso contrário
+    // (mesmo re-import 100% duplicado, sem erros, é SUCESSO).
+    const statusSync = (statusFinal === 'ERRO' && agg.inseridos === 0)
+      ? 'ERRO'
+      : (agg.inseridos > 0 || duplicados > 0)
+        ? 'SUCESSO'
+        : 'PARCIAL';
     upsertSync.run(
       ativoId,
-      agg.inseridos > 0 ? 'SUCESSO' : 'PARCIAL',
+      statusSync,
       totalLido,
       agg.inseridos,
       duplicados,
@@ -203,7 +216,7 @@ function importarHistoricoDividendos(db, itens) {
       agg.ultima,
       agg.primeira && agg.ultima && (new Date(agg.ultima + '-01').getFullYear() - new Date(agg.primeira + '-01').getFullYear()) * 12 +
         new Date(agg.ultima + '-01').getMonth() - new Date(agg.primeira + '-01').getMonth() >= 36 ? 1 : 0,
-      ativoErros.length > 0 ? 'parcial: ' + ativoErros.length + ' ignorados' : null
+      ativoErros ? 'parcial: itens ignorados' : null
     );
   }
   // Ativos processados sem inserção (zero import) também são registrados

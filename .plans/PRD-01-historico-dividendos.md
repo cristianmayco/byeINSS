@@ -4,9 +4,31 @@ Plano de implementação da feature (branch feat/prd-01-historico-dividendos). S
 
 ## Status atual
 
-**Schema final:** 1.5 (revisão do plano original — PRD 03 já havia bumpado para 1.4, então renumeramos para 1.5)
+**Schema final:** 1.5 (PRD 03 já havia bumpado para 1.4, então renumeramos para 1.5)
 **Branch:** `feat/prd-01-historico-dividendos` (a partir de master commit `d3a95d7`)
-**Testes:** 464/464 verde após Sub-PR 1
+**Testes:** 510/510 verde
+
+## Concluído
+
+- ✅ Sub-PR 1: schema 1.5 + lógica pura (`dividendos-hist.js`)
+- ✅ Sub-PR 2: importer (`dividendos-import.js`) + scraper (`scraper-historico.js`) + 2 fixtures
+- ✅ Sub-PR 3: rota `/api/fii-historico/:ticker` + página `#fii-historico/[A-Z]{4}11` + filtro de tipo na tabela + link "Histórico" em Posições (RF-001)
+- ✅ IPC handlers: `scraper:dividendos-historico(ticker)` e `scraper:dividendos-historico-todos`
+- ✅ Docs: CHANGELOG, README, SECURITY
+
+## Pendente
+
+- [ ] Validação por reviewers (schema/code/security/Playwright)
+- [ ] Merge para master
+
+## Findings de reviewers
+
+### Schema reviewer
+
+- **M1 (MÉDIO, follow-up)**: `data_pagto` permanece NOT NULL em DBs legacy após migration 1.5 (vs `init.sql` que declara nullable). Sem impacto runtime hoje porque importer sempre fornece valor. **Fix proposto**: migration 1.6 com recriação de `proventos` (template PRD 03).
+- **B1 (BAIXO, follow-up)**: DEFAULT '' em created_at/updated_at em migration 1.5 vs datetime('now') em init.sql.
+- **B2 (BAIXO, ✅ corrigido)**: índice `idx_proventos_tipo_data` duplicado em FALLBACK_SCHEMA_INLINE.
+- **B3 (BAIXO, aceito)**: sem UNIQUE em `(fonte, origem_chave)`. Dedup vive no importador.
 
 ## Sub-PR 1 — Schema 1.5 + lógica pura (parcialmente concluído)
 

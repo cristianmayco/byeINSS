@@ -73,11 +73,17 @@ function calcularSinaisPorSerie(provs, dy5a) {
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([competencia, valor]) => ({ competencia, valor }));
   // classificarSinais precisa de serieRecente + baseAnterior.
-  // Calcula base como média dos 12 anteriores (rolling) se >=12 itens.
+  // Calcula base como média dos 12 anteriores (rolling) se >=12 itens;
+  // divisor é o tamanho EFETIVO do slice para evitar base subdimensionada
+  // em janelas de 13-23 (bug fix code review).
   const serieRecente = serie.slice(-12);
-  const baseAnterior = serie.length > 12
-    ? serie.slice(-24, -12).reduce((s, m) => s + m.valor, 0) / 12
-    : null;
+  let baseAnterior = null;
+  if (serie.length > 12) {
+    const janelaBase = serie.slice(-24, -12);
+    if (janelaBase.length > 0) {
+      baseAnterior = janelaBase.reduce((s, m) => s + m.valor, 0) / janelaBase.length;
+    }
+  }
   const r = classificarSinais({ serieRecente, baseAnterior: baseAnterior ?? serie[0]?.valor, limitePct: 15 });
   // Cada sinal carrega o estado do classificador até aquele ponto — útil
   // para a UI renderizar marcadores ao longo do tempo.
