@@ -113,4 +113,27 @@ describe('parseHashRoute', () => {
       params: { ticker: 'HGLG11', tipo: 'PRUMADO' },
     });
   });
+
+  // PRD 01: rota dedicada ao histórico de dividendos
+  test('#fii-historico/HGLG11 navega para histórico', () => {
+    expect(parseHashRoute('#fii-historico/HGLG11', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'fii-historico',
+      nav: 'posicoes',
+      params: { ticker: 'HGLG11' }
+    });
+  });
+
+  test('#fii-historico/HGLG11?pagina=2 preserva query string em params', () => {
+    expect(parseHashRoute('#fii-historico/HGLG11?pagina=2', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'fii-historico',
+      nav: 'posicoes',
+      params: { ticker: 'HGLG11', pagina: '2' }
+    });
+  });
+
+  test('#fii-historico/invalid cai em dashboard (ticker inválido)', () => {
+    expect(parseHashRoute('#fii-historico/invalid', STATIC_ROUTE_NAMES)).toEqual({
+      page: 'dashboard', nav: 'dashboard', params: {}
+    });
+  });
 });

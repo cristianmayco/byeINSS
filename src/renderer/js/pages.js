@@ -375,6 +375,10 @@ async function renderPosicoes(el) {
               const detailButton = (window.byeINSSIndicadoresUI && a.tipo === 'FII' && indicador)
                 ? `<button type="button" class="btn btn-sm btn-secondary rentab-matriz-toggle-inline" data-rentab-matriz-ticker="${escapeHtml(a.ticker)}" aria-label="Ver detalhes de rentabilidade para ${safeTicker}">Detalhes</button>`
                 : '';
+              // PRD 01 RF-001: link para histórico de dividendos
+              const histLink = a.tipo === 'FII'
+                ? `<a href="#fii-historico/${escapeHtml(a.ticker)}" class="btn btn-sm btn-secondary" aria-label="Histórico de dividendos para ${safeTicker}">Histórico</a>`
+                : '';
               return `<tr>
                 <td>${tickerCell}</td>
                 <td><span class="tag blue">${safeType}</span></td>
@@ -391,7 +395,7 @@ async function renderPosicoes(el) {
                 <td>${pct(p.pct_carteira)}</td>
                 <td>${pct(a.alvo_pct_carteira)}</td>
                 <td>${a.nota || '—'}</td>
-                <td>${detailButton}${editButton}</td>
+                <td>${histLink}${detailButton}${editButton}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -1542,3 +1546,204 @@ window.delCenario = async function(id) {
   toast('Excluído');
   navigate('cenarios');
 };
+
+// ============ FII HISTÓRICO (PRD 01) ============
+// Tela dedicada ao histórico completo de dividendos do FII. Renderiza:
+//  - KPIs (DY realizado 12M, DY sustentável, vs DY 5a)
+//  - Gráfico Chart.js da série mensal de proventos
+//  - Tabela paginada + filtros por tipo (TODO se sobrar tempo)
+//  - Badges de estado (ESTAVEL/EM_OBSERVACAO/CORTE_CONFIRMADO/AUMENTO_CONFIRMADO)
+//  - Sync status (última sincronização)
+async function renderFiiHistorico(el, { ticker } = {}) {
+  el.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'page-header';
+  const back = document.createElement('a');
+  back.href = '#posicoes';
+  back.className = 'detail-back-link';
+  back.textContent = '← Voltar para Posições';
+  const title = document.createElement('h1');
+  title.className = 'page-title';
+  title.textContent = `Histórico de Dividendos — ${String(ticker || '').toUpperCase()}`;
+  header.append(back, title);
+  el.appendChild(header);
+
+  const loading = document.createElement('div');
+  loading.className = 'empty-state';
+  loading.setAttribute('role', 'status');
+  loading.setAttribute('aria-live', 'polite');
+  loading.textContent = 'Carregando histórico...';
+  el.appendChild(loading);
+
+  try {
+    const r = await api(`/api/fii-historico/${encodeURIComponent(ticker)}?tamanhoPagina=100`);
+    el.innerHTML = '';
+
+    if (r.statusCode === 404) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = `FII ${ticker} não encontrado.`;
+      el.appendChild(empty);
+      return;
+    }
+
+    // KPIs (RF-016/022)
+    const kpiGrid = document.createElement('div');
+    kpiGrid.className = 'kpi-grid';
+    const dyR = r.metricas.dy_realizado_12m;
+    const dyS = r.metricas.dy_sustentavel_pct;
+    const cmp = r.comparacao_5a;
+    const cmpLabel = cmp.classificacao === 'ACIMA_DA_MEDIA' ? 'Acima da média'
+      : cmp.classificacao === 'ABAIXO_DA_MEDIA' ? 'Abaixo da média'
+      : cmp.classificacao === 'EM_LINHA' ? 'Em linha' : '—';
+    kpiGrid.innerHTML = `
+      <div class="kpi"><div class="kpi-label">DY realizado 12M</div>
+        <div class="kpi-value">${dyR == null ? 'Indisponível' : brl(dyR)}</div>
+        <div class="kpi-delta">${r.metricas.cobertura_meses || 0} meses cobertos</div>
+      </div>
+      <div class="kpi"><div class="kpi-label">DY sustentável (${r.metricas.dy_sustentavel_confianca || '—'})</div>
+        <div class="kpi-value">${dyS == null ? '—' : brl(dyS)}</div>
+        <div class="kpi-delta">vs DY 5a: ${cmpLabel}</div>
+      </div>
+      <div class="kpi"><div class="kpi-label">Razão vs DY 5a</div>
+        <div class="kpi-value">${cmp.razao == null ? '—' : (cmp.razao * 100).toFixed(1) + '%'}</div>
+        <div class="kpi-delta">${cmp.diferenca_pp == null ? '—' : (cmp.diferenca_pp >= 0 ? '+' : '') + cmp.diferenca_pp.toFixed(2) + ' pp'}</div>
+      </div>
+      <div class="kpi"><div class="kpi-label">Cadência 12M</div>
+        <div class="kpi-value">${r.metricas.cadencia === 'REGULAR' ? 'Regular' : r.metricas.cadencia === 'IRREGULAR' ? 'Irregular' : '—'}</div>
+        <div class="kpi-delta">${r.metricas.meses_pagantes_12m || 0} pagamentos</div>
+      </div>
+    `;
+    el.appendChild(kpiGrid);
+
+    // Sync status (RF-024)
+    const sync = r.sync_status;
+    if (sync) {
+      const syncCard = document.createElement('div');
+      syncCard.className = 'card';
+      const ultima = sync.ultimo_ts ? new Date(sync.ultimo_ts).toLocaleString('pt-BR') : '—';
+      syncCard.innerHTML = `
+        <div class="card-title">Última sincronização</div>
+        <p class="muted" style="font-size:13px;">
+          Status: <strong>${escapeHtml(sync.ultimo_status)}</strong>
+          · ${escapeHtml(ultima)}
+          · ${sync.ultimo_total_lido || 0} lidos, ${sync.ultimo_inseridos || 0} inseridos
+          · ${escapeHtml(sync.primeira_competencia || '—')} → ${escapeHtml(sync.ultima_competencia || '—')}
+        </p>
+      `;
+      el.appendChild(syncCard);
+    }
+
+    // Estado atual dos sinais (RF-016/017)
+    if (r.estado_atual) {
+      const badge = document.createElement('div');
+      badge.className = 'card';
+      const cor = r.estado_atual === 'CORTE_CONFIRMADO' ? '#fca5a5'
+        : r.estado_atual === 'AUMENTO_CONFIRMADO' ? '#86efac'
+        : r.estado_atual === 'EM_OBSERVACAO' ? '#fdba74'
+        : '#94a3b8';
+    // Prefixo textual garante que o estado é diferenciável mesmo sem cor
+    // (regra a11y do projeto: cor nunca é único diferenciador).
+    const prefixo = r.estado_atual === 'CORTE_CONFIRMADO' ? '↓'
+      : r.estado_atual === 'AUMENTO_CONFIRMADO' ? '↑'
+      : r.estado_atual === 'EM_OBSERVACAO' ? '?' : '·';
+      badge.innerHTML = `
+        <div class="card-title">Estado atual dos sinais</div>
+        <p style="margin:8px 0;">
+          <span role="status" aria-label="${escapeHtml(r.estado_atual)} ${escapeHtml(r.direcao_atual || '')}" style="background:${cor};color:#0f172a;padding:4px 10px;border-radius:4px;font-weight:600;">
+            <span aria-hidden="true">${escapeHtml(prefixo)}</span>
+            ${escapeHtml(r.estado_atual)} ${r.direcao_atual ? '(' + escapeHtml(r.direcao_atual) + ')' : ''}
+          </span>
+        </p>
+      `;
+      el.appendChild(badge);
+    }
+
+    // Tabela histórica (RF-021 paginação + status + tipo + valor)
+    const tableCard = document.createElement('div');
+    tableCard.className = 'card';
+    const tableTitle = document.createElement('div');
+    tableTitle.className = 'card-title';
+    tableTitle.textContent = `Histórico (${r.total_registros} registros)`;
+    tableCard.appendChild(tableTitle);
+
+    // Filtro por tipo (RF-022 — filtrar por tipo na tabela)
+    let filtroAtual = '';
+    const filterBar = document.createElement('div');
+    filterBar.style.margin = '6px 0';
+    filterBar.style.display = 'flex';
+    filterBar.style.gap = '6px';
+    filterBar.style.flexWrap = 'wrap';
+    const tipos = ['', 'DIVIDENDO', 'RENDIMENTO', 'AMORTIZACAO', 'BONIFICACAO'];
+    tipos.forEach(t => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = t ? t : 'Todos';
+      btn.dataset.tipoFiltro = t;
+      btn.setAttribute('aria-pressed', t === filtroAtual ? 'true' : 'false');
+      btn.style.cssText = 'background:transparent;border:1px solid #334155;color:#94a3b8;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;';
+      btn.onclick = () => {
+        filtroAtual = t;
+        filterBar.querySelectorAll('button').forEach(b =>
+          b.setAttribute('aria-pressed', b.dataset.tipoFiltro === filtroAtual ? 'true' : 'false')
+        );
+        renderTable(t);
+      };
+      filterBar.appendChild(btn);
+    });
+    tableCard.appendChild(filterBar);
+
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'table-wrap';
+    const table = document.createElement('table');
+    table.innerHTML = `
+      <thead><tr><th>Competência</th><th>Pagto</th><th>Valor/cota</th><th>Qtd</th><th>Total</th><th>Tipo</th></tr></thead>
+      <tbody></tbody>
+    `;
+    const tbody = table.querySelector('tbody');
+
+    const renderTable = (filtroTipo) => {
+      tbody.innerHTML = '';
+      const visiveis = (r.historico || []).filter(h => !filtroTipo || h.tipo === filtroTipo);
+      for (const h of visiveis) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${escapeHtml(h.competencia || '—')}</td>
+          <td>${escapeHtml(h.data_pagto || '—')}</td>
+          <td>${brl(h.valor_por_cota)}</td>
+          <td>${h.quantidade_elegivel || 0}</td>
+          <td>${brl(h.valor_total || 0)}</td>
+          <td>${escapeHtml(h.tipo || '—')}${h.status === 'AGENDADO' ? ' <small class="muted">(agendado)</small>' : ''}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+      if (visiveis.length === 0) {
+        const tr = document.createElement('tr');
+        const msg = filtroTipo
+          ? `Nenhum provento do tipo ${escapeHtml(filtroTipo)} no histórico.`
+          : 'Sem histórico registrado.';
+        tr.innerHTML = `<td colspan="6" class="empty-state">${msg}</td>`;
+        tbody.appendChild(tr);
+      }
+    };
+    renderTable('');
+    tableWrap.appendChild(table);
+    tableCard.appendChild(tableWrap);
+    el.appendChild(tableCard);
+
+    // Link "Histórico completo em Posições" (RF-001)
+    const backLink = document.createElement('p');
+    backLink.style.marginTop = '16px';
+    backLink.innerHTML = `<a href="#posicoes">← Voltar para Posições</a>`;
+    el.appendChild(backLink);
+  } catch (e) {
+    el.innerHTML = '';
+    const err = document.createElement('div');
+    err.className = 'empty-state';
+    err.setAttribute('role', 'alert');
+    err.textContent = `Erro ao carregar histórico: ${e.message}`;
+    el.appendChild(err);
+  }
+}
+window.renderFiiHistorico = renderFiiHistorico;

@@ -61,6 +61,55 @@ ipcMain.handle('scraper:enriquecer-fii', async (_e, ticker) => scraper.extractFI
 ipcMain.handle('scraper:enriquecer-todos', async () => scraper.extractAllFIIDetalhes(getDb()));
 ipcMain.handle('scraper:agenda-dividendos', async () => scraper.extractAgendaDividendos());
 
+const http = require('http');
+
+// PRD 01: histórico de dividendos por FII. Scraping do histórico completo
+// + persistência via /api/fii-historico/:ticker/importar.
+async function scrapeAndImportHistorico(ticker) {
+  const url = `https://investidor10.com.br/fiis/${String(ticker || '').toLowerCase()}/`;
+  await scraper.openScraper(url);
+  const rows = await scraper.extractHistoricoDividendos(ticker);
+  if (!rows || !rows.length) {
+    return { ticker, extraido: 0, persistido: { inseridos: 0, duplicados: 0, ignorados: 0 } };
+  }
+  const port = getServerPort();
+  const payload = JSON.stringify({ rows });
+  const result = await new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'POST',
+      path: `/api/fii-historico/${encodeURIComponent(ticker)}/importar`,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+    }, (res) => {
+      let body = ''; res.on('data', c => body += c); res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch { resolve({}); }
+      });
+    });
+    req.on('error', reject); req.write(payload); req.end();
+  });
+  return { ticker, extraido: rows.length, persistido: result };
+}
+
+ipcMain.handle('scraper:dividendos-historico', async (_e, ticker) => scrapeAndImportHistorico(ticker));
+
+ipcMain.handle('scraper:dividendos-historico-todos', async () => {
+  // Sequencial por ticker — PRD 01 RF-002 (cancelável). Retorna resumo.
+  const fiiList = getDb().prepare("SELECT id, ticker FROM ativos WHERE tipo='FII' AND ativo=1").all();
+  const results = [];
+  for (const fii of fiiList) {
+    try {
+      const r = await scrapeAndImportHistorico(fii.ticker);
+      results.push({ ticker: fii.ticker, ok: true, ...r });
+    } catch (e) {
+      results.push({ ticker: fii.ticker, ok: false, erro: e.message });
+    }
+  }
+  return {
+    total: fiiList.length,
+    sucessos: results.filter(r => r.ok).length,
+    resultados: results
+  };
+});
+
 // IPC: app info
 ipcMain.handle('app:get-port', () => getServerPort());
 ipcMain.handle('app:get-version', () => app.getVersion());

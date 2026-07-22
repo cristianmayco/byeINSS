@@ -11,5 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scraperClose: () => ipcRenderer.invoke('scraper:close'),
   scraperEnriquecerFII: (ticker) => ipcRenderer.invoke('scraper:enriquecer-fii', ticker),
   scraperEnriquecerTodos: () => ipcRenderer.invoke('scraper:enriquecer-todos'),
-  scraperAgendaDividendos: () => ipcRenderer.invoke('scraper:agenda-dividendos')
+  scraperAgendaDividendos: () => ipcRenderer.invoke('scraper:agenda-dividendos'),
+  // PRD 01: histórico de dividendos
+  scraperDividendosHistorico: (ticker) => ipcRenderer.invoke('scraper:dividendos-historico', ticker),
+  scraperDividendosHistoricoTodos: () => ipcRenderer.invoke('scraper:dividendos-historico-todos')
 });

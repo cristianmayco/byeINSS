@@ -205,8 +205,13 @@ const FALLBACK_SCHEMA_INLINE = `
     updated_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS cotacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data TEXT NOT NULL, preco REAL NOT NULL, fonte TEXT DEFAULT 'manual', FOREIGN KEY (ativo_id) REFERENCES ativos(id));
   CREATE TABLE IF NOT EXISTS lancamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data TEXT NOT NULL, tipo TEXT NOT NULL CHECK(tipo IN ('COMPRA','VENDA')), quantidade INTEGER NOT NULL, preco REAL NOT NULL, corretora TEXT, taxa REAL DEFAULT 0, observacao TEXT, created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (ativo_id) REFERENCES ativos(id));
-  CREATE TABLE IF NOT EXISTS proventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data_com TEXT, data_pagto TEXT NOT NULL, valor_por_cota REAL NOT NULL, tipo TEXT NOT NULL DEFAULT 'DIVIDENDO' CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')), FOREIGN KEY (ativo_id) REFERENCES ativos(id));
+  CREATE TABLE IF NOT EXISTS proventos (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data_com TEXT, data_pagto TEXT, valor_por_cota REAL NOT NULL, tipo TEXT NOT NULL DEFAULT 'DIVIDENDO' CHECK (tipo IN ('DIVIDENDO','RENDIMENTO','BONIFICACAO','AMORTIZACAO')), competencia TEXT NOT NULL DEFAULT '0000-00', precisao_data TEXT NOT NULL DEFAULT 'DIA' CHECK (precisao_data IN ('DIA','MES')), status TEXT NOT NULL DEFAULT 'PAGO' CHECK (status IN ('PAGO','AGENDADO')), fonte TEXT NOT NULL DEFAULT 'MANUAL' CHECK (fonte IN ('MANUAL','INVESTIDOR10','IMPORTACAO','LEGADO')), origem_chave TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (ativo_id) REFERENCES ativos(id));
+  CREATE INDEX IF NOT EXISTS idx_proventos_ativo_data ON proventos(ativo_id, data_pagto DESC);
   CREATE INDEX IF NOT EXISTS idx_proventos_tipo_data ON proventos(tipo, data_pagto DESC);
+  CREATE INDEX IF NOT EXISTS idx_proventos_ativo_competencia ON proventos(ativo_id, status, competencia DESC);
+  CREATE INDEX IF NOT EXISTS idx_proventos_status_pagto ON proventos(status, data_pagto DESC);
+  CREATE INDEX IF NOT EXISTS idx_proventos_tipo_competencia ON proventos(tipo, competencia DESC);
+  CREATE TABLE IF NOT EXISTS fii_dividendos_sync (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, ultimo_status TEXT NOT NULL CHECK (ultimo_status IN ('NUNCA','EM_ANDAMENTO','SUCESSO','PARCIAL','ERRO','CANCELADO')), ultimo_ts TEXT, ultimo_total_lido INTEGER, ultimo_inseridos INTEGER, ultimo_atualizados INTEGER, ultimo_duplicados INTEGER, ultimo_conflitos INTEGER, primeira_competencia TEXT, ultima_competencia TEXT, cobertura_completa INTEGER DEFAULT 0 CHECK (cobertura_completa IN (0,1)), erro TEXT, FOREIGN KEY (ativo_id) REFERENCES ativos(id), UNIQUE (ativo_id));
   CREATE TABLE IF NOT EXISTS metas (id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT NOT NULL, descricao TEXT, valor_alvo REAL NOT NULL, prazo_meses INTEGER, aporte_mensal REAL, taxa_anual REAL DEFAULT 12.0, patrimonio_atual REAL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS cenarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, descricao TEXT, tipo TEXT DEFAULT 'PATRIMONIO', valor_alvo REAL NOT NULL, prazo_meses INTEGER NOT NULL, aporte_inicial REAL DEFAULT 0, aporte_mensal REAL NOT NULL, taxa_anual REAL DEFAULT 12.0, reajuste_aporte_anual REAL DEFAULT 0, cor TEXT DEFAULT '#4ade80', ativo INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT);
@@ -227,6 +232,7 @@ const FALLBACK_SCHEMA_INLINE = `
   CREATE INDEX IF NOT EXISTS idx_ativos_alerta_venc ON ativos(alerta_vencimento) WHERE alerta_vencimento = 1;
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('vencimento_janela_alerta_meses', '24');
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('indicador_dy_vs_5a_abaixo_pct', '95');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('versao_schema', '1.5');
 `;
 
 /**
@@ -458,6 +464,119 @@ const MIGRATIONS = [
       // Não duplicamos aqui dentro da transaction porque o wrapper
       // já faz `INSERT OR REPLACE INTO config (versao_schema)` em
       // sequência atômica.
+    }
+  },
+  {
+    // PRD 01: Histórico de Dividendos.
+    // Adiciona colunas competencia/precisao_data/status/fonte/origem_chave
+    // via ALTER TABLE (sem recriar — dados do PRD 03 ficam intactos).
+    // Cria tabela fii_dividendos_sync para provenance da sincronização.
+    version: '1.5',
+    description: 'PRD 01: histórico de dividendos — colunas competencia/precisao/status/fonte/origem_chave + fii_dividendos_sync',
+    up(db) {
+      // 1. Validar se proventos existe (pode não existir em banco ultra-novo).
+      const hasProventos = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='proventos'")
+        .get();
+      if (!hasProventos) {
+        return;  // init.sql criará do zero com schema completo
+      }
+
+      // 2. Adicionar colunas nullable (idempotente via PRAGMA table_info).
+      // nota 1: data_pagto passa a ser nullable (precisao_data='MES' pode ter
+      //         só mês/ano da fonte sem dia). Default mantém compat com PRD 03.
+      // nota 2: Defaults não-DEFAULT são aplicados retroativamente nos registros
+      //         legados em UPDATE logo abaixo.
+      const cols = db.prepare('PRAGMA table_info(proventos)').all().map(c => c.name);
+      const adds = [
+        // data_pagto já existe mas é NOT NULL — recriamos abaixo se preciso
+        ['competencia', "TEXT NOT NULL DEFAULT '0000-00'"],
+        ['precisao_data', "TEXT NOT NULL DEFAULT 'DIA' CHECK (precisao_data IN ('DIA','MES'))"],
+        ['status', "TEXT NOT NULL DEFAULT 'PAGO' CHECK (status IN ('PAGO','AGENDADO'))"],
+        ['fonte', "TEXT NOT NULL DEFAULT 'MANUAL' CHECK (fonte IN ('MANUAL','INVESTIDOR10','IMPORTACAO','LEGADO'))"],
+        ['origem_chave', 'TEXT'],
+        // created_at/updated_at usam DEFAULT constante — SQLite recusa
+        // non-constant default (datetime('now')) quando a tabela tem dados.
+        // O UPDATE abaixo popula com datetime('now') depois.
+        ['created_at', "TEXT NOT NULL DEFAULT ''"],
+        ['updated_at', "TEXT NOT NULL DEFAULT ''"]
+      ];
+      for (const [name, decl] of adds) {
+        if (!cols.includes(name)) {
+          db.exec(`ALTER TABLE proventos ADD COLUMN ${name} ${decl}`);
+        }
+      }
+
+      // 3. Normalizar registros legados: competencia derivado de data_pagto.
+      //    fonte='LEGADO' para indicar dados pre-existentes sem proveniência
+      //    rastreável (PRD 01 §3.4). origem_chave fica NULL — dedup por
+      //    (fonte='LEGADO', NULL) não aplicaria a nada. created_at/updated_at
+      //    populados com datetime('now') já que o DEFAULT foi vazio para
+      //    atender o ALTER ADD COLUMN.
+      db.exec(`
+        UPDATE proventos
+        SET competencia = strftime('%Y-%m', data_pagto),
+            precisao_data = 'DIA',
+            status = 'PAGO',
+            fonte = 'LEGADO',
+            created_at = COALESCE(NULLIF(created_at, ''), datetime('now')),
+            updated_at = datetime('now')
+        WHERE competencia = '0000-00' OR competencia IS NULL;
+      `);
+
+      // 4. Criar índices (idempotente). Não conseguimos criar UNIQUE
+      //    (fonte, origem_chave) sem dropar e recriar — legado tem NULL.
+      //    O serviço de import garante dedup por origem_chave no INSERT.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_proventos_ativo_competencia
+          ON proventos(ativo_id, status, competencia DESC);
+        CREATE INDEX IF NOT EXISTS idx_proventos_status_pagto
+          ON proventos(status, data_pagto DESC);
+        CREATE INDEX IF NOT EXISTS idx_proventos_tipo_competencia
+          ON proventos(tipo, competencia DESC);
+      `);
+
+      // 5. Tabela fii_dividendos_sync (provenance — idempotente).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fii_dividendos_sync (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ativo_id INTEGER NOT NULL,
+          ultimo_status TEXT NOT NULL CHECK (ultimo_status IN
+            ('NUNCA','EM_ANDAMENTO','SUCESSO','PARCIAL','ERRO','CANCELADO')),
+          ultimo_ts TEXT,
+          ultimo_total_lido INTEGER,
+          ultimo_inseridos INTEGER,
+          ultimo_atualizados INTEGER,
+          ultimo_duplicados INTEGER,
+          ultimo_conflitos INTEGER,
+          primeira_competencia TEXT,
+          ultima_competencia TEXT,
+          cobertura_completa INTEGER DEFAULT 0 CHECK (cobertura_completa IN (0,1)),
+          erro TEXT,
+          FOREIGN KEY (ativo_id) REFERENCES ativos(id),
+          UNIQUE (ativo_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fii_divsync_ts
+          ON fii_dividendos_sync(ultimo_ts DESC);
+      `);
+
+      // 6. Validações pós-migration.
+      const fkViolations = db.prepare('PRAGMA foreign_key_check(proventos)').all();
+      if (fkViolations.length) {
+        throw new Error(
+          `[migration 1.5] FK check falhou em proventos: ${JSON.stringify(fkViolations)}`
+        );
+      }
+      // PKs de sync (UNIQUE em ativo_id) — verificação simples.
+      const dupSync = db.prepare(`
+        SELECT ativo_id, COUNT(*) AS c FROM fii_dividendos_sync
+        GROUP BY ativo_id HAVING c > 1
+      `).all();
+      if (dupSync.length) {
+        throw new Error(
+          `[migration 1.5] fii_dividendos_sync tem duplicatas: ${JSON.stringify(dupSync)}`
+        );
+      }
     }
   }
 ];
