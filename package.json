@@ -4,8 +4,8 @@
   "description": "Sistema para acompanhar e planejar sua aposentadoria / independência financeira",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron . --no-sandbox",
-    "dev": "electron . --no-sandbox --enable-logging",
+    "start": "npm run rebuild && electron . --no-sandbox",
+    "dev": "npm run rebuild && electron . --no-sandbox --enable-logging",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-builder install-app-deps",
     "import:i10": "node scripts/import-i10.js",
@@ -16,9 +16,10 @@
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:all": "electron-builder -mwl",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage --coverage.provider=v8 --coverage.include=src/** --coverage.exclude=src/__tests__/** --coverage.exclude=**/vendor/**"
+    "test": "npm run test:prebuild && vitest run",
+    "test:prebuild": "npm rebuild better-sqlite3 --build-from-source",
+    "test:watch": "npm run test:prebuild && vitest",
+    "test:coverage": "npm run test:prebuild && vitest run --coverage --coverage.provider=v8 --coverage.include=src/** --coverage.exclude=src/__tests__/** --coverage.exclude=**/vendor/**"
   },
   "author": {
     "name": "Cristian",
