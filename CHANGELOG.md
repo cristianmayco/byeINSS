@@ -5,6 +5,64 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+### Added — PRD 04: Comparador vs Média do Segmento (schema 1.7)
+
+- **Schema 1.6 → 1.7 (migration versionada)**: 8 colunas novas em
+  `ativos` para snapshot atômico do benchmark do segmento
+  (`pvp_medio_segmento`, `dy_medio_segmento`, `pl_medio_segmento`,
+  `vpa_medio_segmento`, `peer_grupo_nome`, `peer_grupo_tipo` com CHECK
+  `SEGMENTO|TIPO|NAO_INFORMADO`, `peer_fonte`, `peer_atualizado_em`).
+  7 limiares em `config`: `peer_desvio_neutro_pct` (5.0),
+  `peer_dy_desfavoravel_pct` (10.0), `peer_validade_horas` (168),
+  `peer_margem_teto_pct` (0.0), `peer_multiplicador_favoravel` (1.15),
+  `peer_multiplicador_neutro` (1.00), `peer_multiplicador_desfavoravel`
+  (0.75). Idempotente e transacional.
+- **Lógica pura (`src/shared/peer.js`)**:
+  `calcularPvpVsPeer`/`calcularDyVsPeer`/`calcularVpaVsPeer` (RF-008/009/010),
+  `classificarPeer` com precedência de `DESFAVORAVEL` (RF-011),
+  `precoReferenciaPeer` (RF-015), `precoTetoEfetivo` que **nunca eleva
+  o teto base** (RF-016), `multiplicadorPeer` (RF-021),
+  `mergeSnapshotPeer` whitelist+imutável (RF-005/008),
+  `benchmarkVencido` (RF-007), `simularRebalanceamento` com distribuição
+  proporcional ao peso + redistribuição de sobra (RF-019..023).
+- **Parser I10 (`src/shared/scraper-peer.js`)**: extrai do box "Média
+  Tipo/Segmento" o snapshot canônico. Tolerante a variações de título
+  (`Média Tipo/Segmento` / `Média do Segmento` / `Média do Tipo`) e a
+  sufixos BR (mil/milhões/bilhões/bi). Detecta grupo
+  (`SEGMENTO`/`TIPO`/`NAO_INFORMADO`). Snapshot só válido se os 4
+  numéricos forem extraídos (atomicidade, RF-005).
+- **Endpoints REST**:
+  - `GET /api/fiis/:ticker/comparativo-peer` — detalhe por FII com
+    desvios, classificação, `preco_teto_efetivo`, `regra_limitante`,
+    `multiplicador_peer`, estado (`OK`/`DESATUALIZADO`/`SEM_DADOS`).
+    400 ticker inválido, 404 inexistente ou não-FII.
+  - `POST /api/dashboard/rebalanceamento` — body `{aporte}` retorna
+    sugestões (com quantidade inteira, valor, gap antes/depois, peer
+    classification) e ignorados (com motivos `SEM_COTACAO`,
+    `SEM_TETO`, `ACIMA_DO_TETO`, `SEM_GAP`,
+    `PEER_DESATUALIZADO_COM_FALLBACK`).
+  - Envelope `{ schema: "1.7", configuracao: {...}, ... }`.
+- **Helpers UI puros**:
+  - `src/shared/peer-ui.js` (P5): formatação pt-BR das 3 colunas
+    `P/VP vs peer` / `DY vs peer` / `VPA vs peer`, chip de
+    classificação, filtro por status, ordenação numérica com
+    `SEM_DADOS` no fim.
+  - `src/shared/rebalanceamento-ui.js` (P6): formatação da tabela
+    Preço-teto (sinal MUITO_BARATO/NO_TETO/CARO/MUITO_CARO/SEM_TETO,
+    ratio_preco_teto, regra_limitante) e da simulação (sugestões +
+    ignorados com motivos pt-BR).
+- **Testes**: 6 suítes novas / 138 testes novos (44 shared/peer +
+  29 shared/scraper-peer + 26 shared/peer-ui + 14 shared/rebalanceamento-ui
+  + 18 integration/api-peer + 9 db-migration-1.7). Suíte completa: 657
+  testes verdes.
+- **DOM integration**: a integração efetiva das colunas e do modal de
+  rebalanceamento em `pages.js` foi postergada para um PR de UI dedicado
+  (alto risco de regressão). Helpers ficam prontos e testados para
+  reuso.
+- **Limites**: peer **nunca eleva** o preço-teto base (RF-016);
+  benchmark vencido usa multiplicador neutro (RF-022); ausência de
+  cotação/preço-teto bloqueia a entrada na simulação.
+
 ### Added — PRD 01: Histórico de DividendoseSustentabilidadedeDY por FII (schema 1.5)
 
 - **Schema 1.4 → 1.5 (migration versionada)**: 7 colunas novas em `proventos`
