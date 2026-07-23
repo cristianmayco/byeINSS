@@ -81,12 +81,12 @@ function db15LegacyComDados(nProventos = 5) {
 }
 
 describe('migration 1.6 — M1 fix (data_pagto nullable)', () => {
-  it('init.sql finaliza com versao_schema = 1.6 (pós PRD 01 follow-up)', () => {
+  it('init.sql finaliza com versao_schema = 1.7 (pós PRD 04)', () => {
     const db = freshDb();
     const sql = fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'init.sql'), 'utf8');
     db.exec(sql);
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
   });
 
   it('M1: runMigrations em DB 1.5 legacy torna data_pagto nullable', async () => {
@@ -121,14 +121,14 @@ describe('migration 1.6 — M1 fix (data_pagto nullable)', () => {
     expect(rows.every(r => r.ativo_id === 1)).toBe(true);
   });
 
-  it('migration 1.6 idempotente: rodar 2x mantém versao_schema=1.6 sem duplicar', async () => {
+  it('migration 1.6 idempotente: rodar 2x mantém versao_schema=1.7 sem duplicar', async () => {
     const db = db15LegacyComDados();
     const runMigrations = await loadRunMigrations();
     runMigrations(db);
     runMigrations(db);
 
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
     const m16 = db.prepare(
       "SELECT COUNT(*) AS c FROM schema_migrations WHERE version='1.6'"
     ).get();
@@ -176,7 +176,7 @@ describe('migration 1.6 — M1 fix (data_pagto nullable)', () => {
     runMigrations(db);
 
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
     const reg = db.prepare(
       "SELECT version, description FROM schema_migrations WHERE version='1.6'"
     ).get();

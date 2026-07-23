@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS ativos (
   rentab_real_5a REAL,
   dy_medio_5a_fonte TEXT,             -- 'investidor10' | 'manual' | etc.
   dy_medio_5a_atualizado_em TEXT,     -- ISO datetime
+  -- Migration 1.7: Comparador vs Média do Segmento (PRD 04)
+  pvp_medio_segmento REAL,             -- P/VP médio do segmento (box "Média Tipo/Segmento")
+  dy_medio_segmento REAL,             -- DY 12M médio do segmento, em pontos percentuais
+  pl_medio_segmento REAL,             -- patrimônio líquido total médio do segmento
+  vpa_medio_segmento REAL,            -- valor patrimonial por cota médio
+  peer_grupo_nome TEXT,               -- nome do segmento/tipo usado pelo benchmark
+  peer_grupo_tipo TEXT
+    CHECK (peer_grupo_tipo IS NULL OR peer_grupo_tipo IN ('SEGMENTO','TIPO','NAO_INFORMADO')),
+  peer_fonte TEXT,                    -- 'investidor10' | etc.
+  peer_atualizado_em TEXT,            -- ISO datetime UTC do snapshot válido
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -202,8 +212,8 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('alerta_concentracao_pct', '10.0'),
   ('dy_minimo_global', '8.0'),
   ('moeda', 'BRL'),
-  -- Migration 1.4/1.5 → 1.6: schema versionada (atualizada no INSERT OR REPLACE abaixo)
-  ('versao_schema', '1.6'),
+  -- Migration 1.4/1.5 → 1.7: schema versionada (atualizada no INSERT OR REPLACE abaixo)
+  ('versao_schema', '1.7'),
   -- Thresholds de preço (em % do preço-teto)
   ('pct_muito_barato', '85.0'),   -- até 85% do preço-teto = muito barato
   ('pct_barato', '100.0'),         -- até 100% = no teto
@@ -217,4 +227,12 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   -- Migration 1.2: Vencimento de Contratos
   ('vencimento_janela_alerta_meses', '24'),
   -- Migration 1.3: Indicadores históricos de DY e rentabilidade real (PRD 02)
-  ('indicador_dy_vs_5a_abaixo_pct', '95');
+  ('indicador_dy_vs_5a_abaixo_pct', '95'),
+  -- Migration 1.7: Comparador vs Média do Segmento (PRD 04)
+  ('peer_desvio_neutro_pct', '5.0'),       -- banda neutra (RF-011)
+  ('peer_dy_desfavoravel_pct', '10.0'),    -- DY abaixo da média que vira desfavorável
+  ('peer_validade_horas', '168'),          -- benchmark vencido após 7 dias
+  ('peer_margem_teto_pct', '0.0'),         -- margem sobre referência peer p/ teto efetivo
+  ('peer_multiplicador_favoravel', '1.15'),-- peso no rebalanceamento (RF-021)
+  ('peer_multiplicador_neutro', '1.00'),
+  ('peer_multiplicador_desfavoravel', '0.75');
