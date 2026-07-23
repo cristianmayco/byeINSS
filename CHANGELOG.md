@@ -5,6 +5,38 @@ Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ## [Unreleased]
 
+### Added — PRD 07: Radar de DY Suspeito — Alerta de Corte Iminente (schema 1.7+)
+
+- **Lógica pura (`src/shared/radar-dy.js`)**:
+  `calcularRatio` (dy_12m / dy_medio_5a, com null-safety + precisão completa),
+  `classificarRadar` (NORMAL/AMARELO/VERMELHO/SEM_DADOS com fronteiras
+  estritas: 1.25 → NORMAL, 1.50 → AMARELO, > 1.50 → VERMELHO),
+  `avaliarRadarFII` (contrato canônico), `agregarResumo`,
+  `ordenarAlertas` (RF-014: VERMELHO antes de AMARELO, ratio desc,
+  ticker asc), `validarThresholds` (RF-023: 1.00 < amarelo < vermelho
+  <= 10.00, diff >= 0.01).
+- **Configurações em `config`** (3 seeds novos, sem nova coluna):
+  `radar_dy_habilitado` (default `1`), `radar_dy_limiar_amarelo`
+  (default `1.25`), `radar_dy_limiar_vermelho` (default `1.50`).
+- **Helpers UI (`src/shared/radar-dy-ui.js`)**: `formatarBadgeRadar`
+  com texto/classe/ícone/aria-label (Crítico/Atenção/Normal/Sem dados),
+  `formatarAlertaConsolidado` (RF-015), `formatarTendencia`
+  (EM_QUEDA/ESTAVEL/EM_ALTA).
+- **Endpoints REST (`src/server/routes/radar-dy.js`)**:
+  - `GET /api/fiis/radar-dy` — lista FIIs com classificação, ordenado
+    por severidade. Envelope com `schema`, `thresholds`, `resumo`
+    e `items`.
+  - `GET /api/fiis/radar-dy/:ticker` — detalhe por FII (400 ticker
+    inválido, 404 inexistente, 404 não-FII).
+  - `PUT /api/fiis/radar-dy` — atualiza thresholds atomicamente
+    (RF-024). 400 INVALID_THRESHOLDS em valores inválidos.
+  - Bind 127.0.0.1, prepared statements, mensagens sanitizadas.
+- **Sem schema novo**: nenhum `ALTER TABLE`. Lê `dy_12m` e `dy_medio_5a`
+  já existentes (PRD 02). Cálculo 100% on-the-fly, sem cache.
+- **Testes**: 3 suítes novas / 62 testes (31 shared/radar-dy +
+  12 shared/radar-dy-ui + 19 integration/api-radar-dy).
+- Suíte completa: 719/719 testes verdes.
+
 ### Added — PRD 04: Comparador vs Média do Segmento (schema 1.7)
 
 - **Schema 1.6 → 1.7 (migration versionada)**: 8 colunas novas em
