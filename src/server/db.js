@@ -270,6 +270,9 @@ const FALLBACK_SCHEMA_INLINE = `
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_multiplicador_favoravel', '1.15');
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_multiplicador_neutro', '1.00');
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_multiplicador_desfavoravel', '0.75');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('radar_dy_habilitado', '1');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('radar_dy_limiar_amarelo', '1.25');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('radar_dy_limiar_vermelho', '1.50');
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('versao_schema', '1.7');
 `;
 
@@ -801,7 +804,11 @@ const MIGRATIONS = [
         ['peer_margem_teto_pct', '0.0'],
         ['peer_multiplicador_favoravel', '1.15'],
         ['peer_multiplicador_neutro', '1.00'],
-        ['peer_multiplicador_desfavoravel', '0.75']
+        ['peer_multiplicador_desfavoravel', '0.75'],
+        // PRD 07: Radar de DY Suspeito (thresholds + flag global)
+        ['radar_dy_habilitado', '1'],
+        ['radar_dy_limiar_amarelo', '1.25'],
+        ['radar_dy_limiar_vermelho', '1.50']
       ];
       const seedStmt = db.prepare(
         'INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)'

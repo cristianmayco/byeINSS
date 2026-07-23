@@ -235,4 +235,8 @@ INSERT OR IGNORE INTO config (chave, valor) VALUES
   ('peer_margem_teto_pct', '0.0'),         -- margem sobre referência peer p/ teto efetivo
   ('peer_multiplicador_favoravel', '1.15'),-- peso no rebalanceamento (RF-021)
   ('peer_multiplicador_neutro', '1.00'),
-  ('peer_multiplicador_desfavoravel', '0.75');
+  ('peer_multiplicador_desfavoravel', '0.75'),
+  -- Migration 1.7+: Radar de DY Suspeito (PRD 07)
+  ('radar_dy_habilitado', '1'),
+  ('radar_dy_limiar_amarelo', '1.25'),
+  ('radar_dy_limiar_vermelho', '1.50');
