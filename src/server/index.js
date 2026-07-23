@@ -18,6 +18,8 @@ const scraperContratosRouter = require('./routes/scraper-contratos.js');
 // PRD 02: Indicadores históricos de DY e rentabilidade real
 const indicadoresRouter = require('./routes/indicadores.js');
 const scraperIndicadoresRouter = require('./routes/scraper-indicadores.js');
+// PRD 04: Comparador vs Média do Segmento
+const peerRoutes = require('./routes/peer.js');
 
 let serverPort = null;
 
@@ -46,6 +48,8 @@ async function startServer() {
   app.use('/api/fiis/scraper/contratos', scraperContratosRouter);  // PRD 12 sub-PR 3: resync
   app.use('/api', indicadoresRouter);                          // PRD 02: /fiis/indicadores + /:ticker
   app.use('/api/fiis/scraper/indicadores', scraperIndicadoresRouter);  // PRD 02 sub-PR 3: resync
+  app.use('/api/fiis', peerRoutes.comparativoRouter);          // PRD 04: /comparativo-peer/:ticker
+  app.use('/api/dashboard', peerRoutes.rebalanceamentoRouter); // PRD 04: POST /rebalanceamento
   // PRD 01: Histórico de dividendos
   const fiiHistoricoRouter = require('./routes/fii-historico.js');
   app.use('/api/fii-historico', fiiHistoricoRouter);
