@@ -46,12 +46,12 @@ function db14ComProventos({ preservarProventos = 5 } = {}) {
 }
 
 describe('migration 1.5 — PRD 01 Histórico de Dividendos', () => {
-  it('init.sql finaliza com versao_schema = 1.5 após o bump do PRD 01', () => {
+  it('init.sql finaliza com versao_schema = 1.7 após o bump do PRD 04', () => {
     const db = freshDb();
     const sql = fs.readFileSync(INIT_SQL_PATH, 'utf8');
     db.exec(sql);
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
   });
 
   it('init.sql cria tabela fii_dividendos_sync com colunas esperadas', () => {
@@ -115,13 +115,15 @@ describe('migration 1.5 — PRD 01 Histórico de Dividendos', () => {
     runMigrations(db);
 
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
     // Sem duplicação: cada migration fica exatamente 1x (wrapper faz o
     // `applied.has(version) continue` no segundo run).
     const m15 = db.prepare("SELECT COUNT(*) AS c FROM schema_migrations WHERE version='1.5'").get();
     expect(m15.c).toBe(1);
     const m16 = db.prepare("SELECT COUNT(*) AS c FROM schema_migrations WHERE version='1.6'").get();
     expect(m16.c).toBe(1);
+    const m17 = db.prepare("SELECT COUNT(*) AS c FROM schema_migrations WHERE version='1.7'").get();
+    expect(m17.c).toBe(1);
   });
 
   it('migration 1.5 insere novo provento com tipo AMORTIZACAO (herança do PRD 03) + novos campos', async () => {

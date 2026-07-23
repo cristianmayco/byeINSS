@@ -122,9 +122,9 @@ describe('migration 1.4 — PRD 03: AMORTIZACAO em proventos', () => {
     const db = freshDb();
     const sql = fs.readFileSync(INIT_SQL_PATH, 'utf8');
     db.exec(sql);
-    // Schema 1.6 inclui 1.4 + 1.5 + 1.6 (PRD 03 + PRD 01 + PRD 01 follow-up)
+    // Schema 1.7 inclui 1.4 + 1.5 + 1.6 + 1.7 (PRD 03 + PRD 01 + PRD 01 follow-up + PRD 04)
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
     // Verifica que o CHECK constraint existe
     const checkRows = db.prepare(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='proventos'"
@@ -272,9 +272,9 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     const runMigrations = await loadRunMigrations();
     expect(() => runMigrations(db)).not.toThrow();
 
-    // Bump de versão — agora termina em 1.6 (PRD 03 + PRD 01 + PRD 01 follow-up)
+    // Bump de versão — agora termina em 1.7 (PRD 03 + PRD 01 + PRD 01 follow-up + PRD 04)
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
 
     // Schema_migrations recebeu 1.4, 1.5 e 1.6
     const reg14 = db.prepare("SELECT version FROM schema_migrations WHERE version='1.4'").get();
@@ -324,7 +324,7 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     runMigrations(db);  // 2x: deve ser no-op
 
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
     // Índice criado exatamente 1x
     const idxCount = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='index' AND name='idx_proventos_tipo_data'").get();
     expect(idxCount.c).toBe(1);
@@ -348,6 +348,6 @@ describe('runMigrations caminho real — PRD 03 schema 1.4 em DB 1.3', () => {
     const runMigrations = await loadRunMigrations();
     expect(() => runMigrations(db)).not.toThrow();
     const v = db.prepare("SELECT valor FROM config WHERE chave='versao_schema'").get();
-    expect(v.valor).toBe('1.6');
+    expect(v.valor).toBe('1.7');
   });
 });

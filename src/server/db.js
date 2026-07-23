@@ -222,6 +222,16 @@ const FALLBACK_SCHEMA_INLINE = `
     rentab_real_5a REAL,
     dy_medio_5a_fonte TEXT,
     dy_medio_5a_atualizado_em TEXT,
+    -- Migration 1.7: Comparador vs Média do Segmento (PRD 04)
+    pvp_medio_segmento REAL,
+    dy_medio_segmento REAL,
+    pl_medio_segmento REAL,
+    vpa_medio_segmento REAL,
+    peer_grupo_nome TEXT,
+    peer_grupo_tipo TEXT
+      CHECK (peer_grupo_tipo IS NULL OR peer_grupo_tipo IN ('SEGMENTO','TIPO','NAO_INFORMADO')),
+    peer_fonte TEXT,
+    peer_atualizado_em TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE IF NOT EXISTS cotacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, ativo_id INTEGER NOT NULL, data TEXT NOT NULL, preco REAL NOT NULL, fonte TEXT DEFAULT 'manual', FOREIGN KEY (ativo_id) REFERENCES ativos(id));
@@ -253,7 +263,17 @@ const FALLBACK_SCHEMA_INLINE = `
   CREATE INDEX IF NOT EXISTS idx_ativos_alerta_venc ON ativos(alerta_vencimento) WHERE alerta_vencimento = 1;
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('vencimento_janela_alerta_meses', '24');
   INSERT OR IGNORE INTO config (chave, valor) VALUES ('indicador_dy_vs_5a_abaixo_pct', '95');
-  INSERT OR IGNORE INTO config (chave, valor) VALUES ('versao_schema', '1.6');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_desvio_neutro_pct', '5.0');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_dy_desfavoravel_pct', '10.0');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_validade_horas', '168');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_margem_teto_pct', '0.0');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_multiplicador_favoravel', '1.15');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_multiplicador_neutro', '1.00');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('peer_multiplicador_desfavoravel', '0.75');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('radar_dy_habilitado', '1');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('radar_dy_limiar_amarelo', '1.25');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('radar_dy_limiar_vermelho', '1.50');
+  INSERT OR IGNORE INTO config (chave, valor) VALUES ('versao_schema', '1.7');
 `;
 
 /**
@@ -712,6 +732,111 @@ const MIGRATIONS = [
       const integrity = db.prepare('PRAGMA integrity_check').get();
       if (integrity.integrity_check !== 'ok') {
         throw new Error(`[migration 1.6] integrity_check falhou: ${integrity.integrity_check}`);
+      }
+    }
+  },
+  {
+    // PRD 04: Comparador vs Média do Segmento.
+    // Schema 1.6 → 1.7. Adiciona 8 colunas peer em ativos (RF-001..010)
+    // e 7 limiares em config (RF-011, RF-016, RF-021, RF-007).
+    version: '1.7',
+    description: 'PRD 04: Comparador vs Média do Segmento (peer benchmark)',
+    up(db) {
+      // 1. Defesa em profundidade: garantir schema_migrations presente
+      const hasSchema = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
+        .get();
+      if (!hasSchema) {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+            duration_ms INTEGER,
+            rows_before INTEGER,
+            rows_after INTEGER,
+            reversible INTEGER NOT NULL DEFAULT 1
+          );
+          CREATE INDEX IF NOT EXISTS idx_schema_migrations_applied
+            ON schema_migrations(applied_at DESC);
+        `);
+      }
+
+      const hasAtivos = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ativos'")
+        .get();
+      if (!hasAtivos) return;  // init.sql criará do zero
+
+      // 2. Inspeção prévia de colunas (SQLite não tem ADD COLUMN IF NOT EXISTS
+      // universalmente — verificação via pragma_table_info).
+      const colsAtuais = new Set(
+        db.prepare('PRAGMA table_info(ativos)').all().map(c => c.name)
+      );
+
+      const novasColunas = [
+        ['pvp_medio_segmento', 'REAL'],
+        ['dy_medio_segmento', 'REAL'],
+        ['pl_medio_segmento', 'REAL'],
+        ['vpa_medio_segmento', 'REAL'],
+        ['peer_grupo_nome', 'TEXT'],
+        ['peer_grupo_tipo', 'TEXT'],
+        ['peer_fonte', 'TEXT'],
+        ['peer_atualizado_em', 'TEXT']
+      ];
+
+      // 3. Captura checksums antes do DDL.
+      const rowsAtivosAntes = db.prepare('SELECT COUNT(*) AS c FROM ativos').get().c;
+
+      // 4. Adiciona colunas faltantes em transação.
+      db.transaction(() => {
+        for (const [col, tipo] of novasColunas) {
+          if (!colsAtuais.has(col)) {
+            db.exec(`ALTER TABLE ativos ADD COLUMN ${col} ${tipo}`);
+          }
+        }
+      })();
+
+      // 5. Seeds de configuração (RF-011, RF-016, RF-021, RF-007).
+      const seedsPeer = [
+        ['peer_desvio_neutro_pct', '5.0'],
+        ['peer_dy_desfavoravel_pct', '10.0'],
+        ['peer_validade_horas', '168'],
+        ['peer_margem_teto_pct', '0.0'],
+        ['peer_multiplicador_favoravel', '1.15'],
+        ['peer_multiplicador_neutro', '1.00'],
+        ['peer_multiplicador_desfavoravel', '0.75'],
+        // PRD 07: Radar de DY Suspeito (thresholds + flag global)
+        ['radar_dy_habilitado', '1'],
+        ['radar_dy_limiar_amarelo', '1.25'],
+        ['radar_dy_limiar_vermelho', '1.50']
+      ];
+      const seedStmt = db.prepare(
+        'INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)'
+      );
+      for (const [chave, valor] of seedsPeer) {
+        seedStmt.run(chave, valor);
+      }
+
+      // 6. Validações pós-migration.
+      const colsDepois = db.prepare('PRAGMA table_info(ativos)').all().map(c => c.name);
+      for (const [col] of novasColunas) {
+        if (!colsDepois.includes(col)) {
+          throw new Error(`[migration 1.7] coluna ${col} não foi adicionada`);
+        }
+      }
+      const rowsAtivosDepois = db.prepare('SELECT COUNT(*) AS c FROM ativos').get().c;
+      if (rowsAtivosDepois !== rowsAtivosAntes) {
+        throw new Error(
+          `[migration 1.7] contagem de ativos mudou: ${rowsAtivosAntes} → ${rowsAtivosDepois}`
+        );
+      }
+      const fkViolations = db.prepare('PRAGMA foreign_key_check').all();
+      if (fkViolations.length) {
+        throw new Error(`[migration 1.7] FK check falhou: ${JSON.stringify(fkViolations)}`);
+      }
+      const integrity = db.prepare('PRAGMA integrity_check').get();
+      if (integrity.integrity_check !== 'ok') {
+        throw new Error(`[migration 1.7] integrity_check falhou: ${integrity.integrity_check}`);
       }
     }
   }
