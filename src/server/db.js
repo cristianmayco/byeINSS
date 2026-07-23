@@ -124,7 +124,28 @@ async function initDb() {
   const colunasFaltando = ALL_NEEDED_COLS.filter(c => !ativosCols.has(c));
   // É legacy APENAS se a tabela `ativos` existe mas está faltando colunas.
   // Se `ativos` não existe, é fresh install — não pula init.sql.
-  const isLegacy = hasAtivosTable && colunasFaltando.length > 0;
+  // PRD 01 fix: também detectar DB em schema pré-PRD01 (ex: 1.3) onde a
+  // tabela `proventos` ainda não tem as colunas novas (status/fonte/etc).
+  // Sem isso, init.sql rodaria CREATE INDEX que referencia `status` e
+  // quebraria com "no such column".
+  let precisaRunMigrations = hasAtivosTable && colunasFaltando.length > 0;
+  if (hasAtivosTable && !precisaRunMigrations) {
+    const hasProventos = dbInstance
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='proventos'")
+      .get();
+    if (hasProventos) {
+      const proventosCols = dbInstance
+        .prepare('PRAGMA table_info(proventos)')
+        .all().map(c => c.name);
+      // PRD 01 introduziu 'status' e 'fonte' em proventos. Se faltam,
+      // é pré-PRD01 (1.3 ou anterior) e init.sql tem CREATE INDEX que
+      // referencia essas colunas.
+      if (!proventosCols.includes('status') || !proventosCols.includes('fonte')) {
+        precisaRunMigrations = true;
+      }
+    }
+  }
+  const isLegacy = precisaRunMigrations;
   console.log('[db] isLegacy:', isLegacy,
     'faltam', colunasFaltando.length, 'colunas PRD 12/02',
     colunasFaltando.length ? '(' + colunasFaltando.join(',') + ')' : '');
